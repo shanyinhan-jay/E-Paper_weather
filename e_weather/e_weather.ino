@@ -117,7 +117,7 @@ bool updateCalendarPending = false;
 bool updateEnvPending = false;
 bool updateDatePending = false;
 unsigned long lastUpdateTrigger = 0;
-const unsigned long UPDATE_DELAY_MS = 1000; // Wait 1s after last message to update (debounce)
+const unsigned long UPDATE_DELAY_MS = 200; // Wait 200ms after last message to update (debounce)
 
 Page currentPage = PAGE_WEATHER;
 bool switchPagePending = false;
@@ -2532,14 +2532,15 @@ void loop() {
   
   // Handle deferred updates
   if (millis() - lastUpdateTrigger > UPDATE_DELAY_MS) {
-      if (updateWeatherPending || updateEnvPending || updateDatePending) {
+      if (updateWeatherPending || updateEnvPending || updateDatePending || (updateCalendarPending && currentPage == PAGE_WEATHER)) {
           if (currentPage == PAGE_WEATHER) {
-               Serial.println("Triggering Deferred Weather Update");
+               Serial.println("Triggering Deferred Weather Update (Weather or Calendar change)");
                displayWeatherDashboard(true);
           }
           updateWeatherPending = false;
           updateEnvPending = false;
           updateDatePending = false;
+          if (currentPage == PAGE_WEATHER) updateCalendarPending = false; // Only clear if we actually refreshed
       }
       
       if (updateCalendarPending) {
