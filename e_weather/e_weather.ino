@@ -45,12 +45,7 @@ extern const uint8_t u8g2_font_open_iconic_weather_4x_t[] U8X8_PROGMEM;
 extern const uint8_t u8g2_font_logisoso60_tf[] U8X8_PROGMEM;
 extern const uint8_t u8g2_font_logisoso30_tf[] U8X8_PROGMEM;
 
-#define SERIAL2_BAUD 115200
-#define SERIAL2_RX 16
-#define SERIAL2_TX 17
-String serial2Buffer = "";
-bool serial2ReadyHandled = false; // 是否已处理过非整点时间
-bool waitingForSerial2Time = false; // 是否在等待串口2时间
+
 
 const char* build_date = __DATE__;
 const char* build_time = __TIME__;
@@ -116,6 +111,7 @@ bool updateWeatherPending = false;
 bool updateCalendarPending = false;
 bool updateEnvPending = false;
 bool updateDatePending = false;
+bool fullRefreshPending = false; // Flag for full refresh instead of partial
 unsigned long lastUpdateTrigger = 0;
 const unsigned long UPDATE_DELAY_MS = 200; // Wait 200ms after last message to update (debounce)
 
@@ -1403,8 +1399,7 @@ void displayWeatherDashboard(bool partial_update = false) {
         
         // free(BlackImage); // Keep allocated
         // BlackImage = NULL;
-        Serial2.println("bye");
-        Serial.println("Serial2: sent bye after weather refresh");
+
     }
 }
 
@@ -1466,6 +1461,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
               }
               currentForecastCount = count;
               updateWeatherPending = true;
+              fullRefreshPending = true; // Set full refresh flag for weather data
           }
           
           // 3. Parse Indoor Environment
@@ -1975,6 +1971,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
           if (count > 0) {
               updateWeatherPending = true;
+              fullRefreshPending = true; // Set full refresh flag for weather data
               lastUpdateTrigger = millis();
           } else {
                String prettyJson;
@@ -2140,13 +2137,7 @@ void setup() {
   Serial.print("Air Quality Topic: ");
   Serial.println(config.mqtt_air_quality_topic);
 
-  // Serial2 Init & Send Ready
-    // Serial2 Init & Send Ready
-  Serial2.begin(SERIAL2_BAUD, SERIAL_8N1, SERIAL2_RX, SERIAL2_TX);
-  delay(50);
-  Serial2.println("ready");
-  Serial.println("Serial2: sent ready");
-  waitingForSerial2Time = true;
+
 
 
 
@@ -2176,6 +2167,7 @@ void setup() {
       WiFi.begin(config.wifi_ssid, config.wifi_pass);
       
       Serial.print("Connecting to WiFi");
+      displayMessage("Connecting to WiFi:\n" + String(config.wifi_ssid));
       int retry = 0;
       while (WiFi.status() != WL_CONNECTED && retry < 60) { // Increased to 30 seconds (was 15s)
           delay(500);
@@ -2186,6 +2178,7 @@ void setup() {
       
       if (WiFi.status() == WL_CONNECTED) {
           Serial.println("WiFi Connected! Keeping AP for MQTT...");
+          displayMessage("WiFi Connected!\nIP: " + WiFi.localIP().toString() + "\nGW: " + WiFi.gatewayIP().toString() + "\nConnecting to MQTT...");
           enableAP = true; // Keep AP enabled until MQTT connects
           WiFi.mode(WIFI_AP_STA); 
           
@@ -2194,6 +2187,7 @@ void setup() {
 
       } else {
           Serial.println("WiFi Timeout. Enabling AP.");
+          displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
           WiFi.mode(WIFI_AP);
       }
   } else {
@@ -2252,6 +2246,7 @@ void setup() {
       
       if (mqttConnected) {
           Serial.println("MQTT Connected (Setup)");
+          displayMessage("MQTT Connected!\nFetching Weather...");
           
           // Disable AP after successful MQTT connection
           WiFi.softAPdisconnect(true);
@@ -2462,69 +2457,7 @@ void loop() {
           }
       } else {
           client.loop();
- // 处理串口2时间更新（在天气页面已经全刷过之后才处理）
-  if (waitingForSerial2Time && !serial2ReadyHandled) {
-    while (Serial2.available()) {
-      char c = Serial2.read();
-      if (c == '\n') {
-        serial2Buffer.trim();
-        Serial.print("Serial2 received: ");
-        Serial.println(serial2Buffer);
 
-        JsonDocument timeDoc;
-        DeserializationError terr = deserializeJson(timeDoc, serial2Buffer);
-
-        if (!terr && timeDoc.containsKey("time")) {
-          String timeStr = timeDoc["time"].as<String>();
-          int colon = timeStr.indexOf(':');
-
-          if (colon > 0) {
-            int minute = timeStr.substring(colon + 1, colon + 3).toInt();
-
-            if (minute != 0) {
-              // 非整点：此时 Partial_DATA 已经由上面的 displayWeatherDashboard 正确填充
-              // 直接局部刷新时间区域
-              UWORD Imagesize = ((EPD_4IN2_WIDTH % 8 == 0) ?
-                                 (EPD_4IN2_WIDTH / 8) :
-                                 (EPD_4IN2_WIDTH / 8 + 1)) * EPD_4IN2_HEIGHT;
-
-              if (BlackImage != NULL) {
-                memset(BlackImage, 0xFF, Imagesize);
-                Paint_NewImage(BlackImage, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, 0, WHITE);
-                Paint_SelectImage(BlackImage);
-
-                u8g2.begin(paint_gfx);
-                u8g2.setFontMode(1);
-                u8g2.setForegroundColor(1);
-                u8g2.setBackgroundColor(0);
-                u8g2.setFont(u8g2_font_logisoso50_tf);
-
-                String dispTime = timeStr.substring(0, 5);
-                int tWidth = u8g2.getUTF8Width(dispTime.c_str());
-                int timeX = 100 - (tWidth / 2);
-                u8g2.drawUTF8(timeX, 65, dispTime.c_str());
-
-                DEV_Module_Init();
-                Local_EPD_4IN2_Init_Partial();
-                Local_EPD_4IN2_PartialDisplay(0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, BlackImage);
-                Local_EPD_4IN2_Sleep();
-
-                Serial.println("Serial2: partial time update done (loop)");
-              }
-            }
-          }
-
-          Serial2.println("bye");
-          Serial.println("Serial2: sent bye");
-          serial2ReadyHandled = true;
-          waitingForSerial2Time = false;
-        }
-        serial2Buffer = "";
-      } else {
-        serial2Buffer += c;
-      }
-    }
-  }
 
 
 
@@ -2534,12 +2467,13 @@ void loop() {
   if (millis() - lastUpdateTrigger > UPDATE_DELAY_MS) {
       if (updateWeatherPending || updateEnvPending || updateDatePending || (updateCalendarPending && currentPage == PAGE_WEATHER)) {
           if (currentPage == PAGE_WEATHER) {
-               Serial.println("Triggering Deferred Weather Update (Weather or Calendar change)");
-               displayWeatherDashboard(true);
+               Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
+               displayWeatherDashboard(!fullRefreshPending); // Use full refresh if flag is set
           }
           updateWeatherPending = false;
           updateEnvPending = false;
           updateDatePending = false;
+          fullRefreshPending = false; // Reset full refresh flag
           if (currentPage == PAGE_WEATHER) updateCalendarPending = false; // Only clear if we actually refreshed
       }
       
