@@ -1,0 +1,938 @@
+[
+    {
+        "id": "c077bc34b507c1d0",
+        "type": "tab",
+        "label": "ink",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "76ae28f3bc12bd14",
+        "type": "http request",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "method": "GET",
+        "ret": "bin",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 500,
+        "y": 220,
+        "wires": [
+            [
+                "1224ab37a07640c5"
+            ]
+        ]
+    },
+    {
+        "id": "9e74a96fe86b6722",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [],
+        "repeat": "1800",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 110,
+        "y": 280,
+        "wires": [
+            [
+                "297195bc7434dcbb"
+            ]
+        ]
+    },
+    {
+        "id": "1224ab37a07640c5",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "解压",
+        "func": "// 注意：在设置里添加后，直接用 zlib 即可\ntry {\n    msg.payload = zlib.inflateSync(msg.payload).toString();\n    return msg;\n} catch (e) {\n    try {\n        msg.payload = zlib.gunzipSync(msg.payload).toString();\n        return msg;\n    } catch (err) {\n        node.error(\"解压失败: \" + err.message);\n        return null;\n    }\n}",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "zlib",
+                "module": "zlib"
+            }
+        ],
+        "x": 650,
+        "y": 220,
+        "wires": [
+            [
+                "a0a0ebd87e81b21e"
+            ]
+        ]
+    },
+    {
+        "id": "a0a0ebd87e81b21e",
+        "type": "json",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 790,
+        "y": 220,
+        "wires": [
+            [
+                "640eca95f692595a"
+            ]
+        ]
+    },
+    {
+        "id": "297195bc7434dcbb",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "function 6",
+        "func": "const apiKey = \"0c540a46f8a44ab6b4c60ab4cbd5f8ea\";\nconst location = \"101210507\";\n\n// 直接拼接到 URL 后面\nmsg.url = `https://pc3bycfxfy.re.qweatherapi.com/v7/weather/7d?location=${location}&key=${apiKey}`;\n\n// 清空 headers 防止干扰\nmsg.headers = {};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 340,
+        "y": 220,
+        "wires": [
+            [
+                "76ae28f3bc12bd14"
+            ]
+        ]
+    },
+    {
+        "id": "640eca95f692595a",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "提取",
+        "func": "// 1. 获取原始的每日预报数组\nlet daily = msg.payload.daily;\n\n// 2. 使用 map 函数提取需要的字段并重新构建\nlet simplifiedData = daily.map(item => {\n    return {\n        fxDate: item.fxDate,           // 建议保留日期，方便区分\n        textDay: item.textDay,   \n        iconDay: item.iconDay,       // textDay\n        windDirDay: item.windDirDay,       // windDirDay\n        windSpeedDay: item.windSpeedDay,     // windSpeedDay\n        tempMax: item.tempMax,        // tempMax\n        tempMin: item.tempMin,         // tempMin\n        textNight: item.textNight,\n        iconNight: item.iconNight\n\n    };\n});\n\n// 3. 将处理后的精简数组重新赋值给 payload 输出\nmsg.payload = simplifiedData;\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 950,
+        "y": 220,
+        "wires": [
+            [
+                "514cf7efd13433da"
+            ]
+        ]
+    },
+    {
+        "id": "trigger_node",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [],
+        "repeat": "",
+        "crontab": "10 00 * * *",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "x": 110,
+        "y": 360,
+        "wires": [
+            [
+                "set_payload"
+            ]
+        ]
+    },
+    {
+        "id": "set_payload",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "设置参数",
+        "func": "// 获取当前系统时间对象\nconst now = new Date();\n\n// 自动提取年、月、日、时、分\nmsg.payload = {\n    \"year\": now.getFullYear(),\n    \"month\": now.getMonth() + 1, // JavaScript 月份是从 0 开始的，所以要 +1\n    \"day\": now.getDate(),\n    \"hour\": now.getHours(),\n    \"minute\": now.getMinutes()\n};\n\nmsg.headers = {\n    \"accept\": \"application/json\"\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 290,
+        "y": 360,
+        "wires": [
+            [
+                "http_req"
+            ]
+        ]
+    },
+    {
+        "id": "http_req",
+        "type": "http request",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "method": "POST",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "http://192.168.1.250:7860/api/lunar",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 480,
+        "y": 360,
+        "wires": [
+            [
+                "d0338179a3075887"
+            ]
+        ]
+    },
+    {
+        "id": "d0338179a3075887",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "提取",
+        "func": "// 1. 获取 API 返回的原始 JSON 数据\nconst data = msg.payload;\n\n// 2. 提取阳历日期 (从 \"2024-04-23T09:51:00\" 截取为 \"2024-04-23\")\nconst solarDate = data[\"日期\"].split('T')[0];\n\n// --- 新增：提取星期字段 ---\nconst weekDay = data[\"星期\"] || \"\";\n\n// 3. 处理农历日期 (去掉开头的中文年份，如 \"二零二四\")\nconst rawLunar = data[\"农历\"] || \"\";\nconst lunarParts = rawLunar.split(\" \");\nconst lunarFormatted = lunarParts.slice(1).join(\" \");\n\n// 4. 计算节气信息\nlet termInfo = \"\";\nif (data[\"今日节气\"] && data[\"今日节气\"] !== \"无\") {\n    termInfo = `今日节气：【${data[\"今日节气\"]}】`;\n} else if (data[\"下一节气\"]) {\n    const nextTerm = data[\"下一节气\"]; \n    const nextName = nextTerm[0];\n    const nextYear = nextTerm[2];\n    const nextMonth = String(nextTerm[1][0]).padStart(2, '0');\n    const nextDay = String(nextTerm[1][1]).padStart(2, '0');\n    \n    // 计算天数差\n    const today = new Date(solarDate);\n    const nextDate = new Date(`${nextYear}-${nextMonth}-${nextDay}`);\n    const diffDays = Math.ceil((nextDate.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));\n    \n    termInfo = `距离下一节气【${nextName}】还有 ${diffDays} 天`;\n} else {\n    termInfo = \"暂无节气信息\";\n}\n\n// 5. 按照要求的 JSON 格式输出\nmsg.payload = {\n    \"阳历日期\": solarDate,\n    \"星期\": weekDay,        // <--- 已添加星期字段\n    \"农历日期\": lunarFormatted,\n    \"节气信息\": termInfo\n};\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 650,
+        "y": 360,
+        "wires": [
+            [
+                "514cf7efd13433da"
+            ]
+        ]
+    },
+    {
+        "id": "1bd68a01e1819f61",
+        "type": "mqtt in",
+        "z": "c077bc34b507c1d0",
+        "name": "LivingroomENV",
+        "topic": "espnow_bridge/Env_Sensor/D8:F1:5B:CE:1B:BC/LivingroomENV",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "534daa9312583ab9",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 120,
+        "y": 460,
+        "wires": [
+            [
+                "4fdbc6c0c3e4ec65"
+            ]
+        ]
+    },
+    {
+        "id": "4fdbc6c0c3e4ec65",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "提取",
+        "func": "// 1. 获取输入对象\nvar input = msg.payload;\n\n// 定义一个格式化函数，用于处理保留一位小数\nfunction formatValue(val) {\n    if (val === null || val === undefined || isNaN(val)) {\n        return null;\n    }\n    // Number(val) 确保输入即使是字符串形式的数字也能处理\n    // toFixed(1) 会返回保留一位小数的字符串，例如 25 -> \"25.0\", 25.44 -> \"25.4\"\n    return Number(val).toFixed(1);\n}\n\n// 2. 提取数据并进行格式化\nvar rawT = (input.payload && input.payload.temperature !== undefined) ? input.payload.temperature : null;\nvar rawH = (input.payload && input.payload.humidity !== undefined) ? input.payload.humidity : null;\n\nvar t = formatValue(rawT);\nvar h = formatValue(rawH);\nvar name = input.name || \"未知设备\";\n\n// 3. 重新构造 payload\nmsg.payload = {\n    \"device_name\": name,\n    \"temp\": t,    // 此时输出的是字符串，如 \"25.0\"\n    \"humi\": h,    // 此时输出的是字符串，如 \"50.0\"\n    \"processed\": true \n};\n\n// 4. 返回消息\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 350,
+        "y": 460,
+        "wires": [
+            [
+                "514cf7efd13433da"
+            ]
+        ]
+    },
+    {
+        "id": "93d2d3b3c7341d9b",
+        "type": "server-state-changed",
+        "z": "c077bc34b507c1d0",
+        "name": "weather_update",
+        "server": "6e293a59.243aa4",
+        "version": 6,
+        "outputs": 1,
+        "exposeAsEntityConfig": "",
+        "entities": {
+            "entity": [
+                "input_button.weather_update"
+            ],
+            "substring": [],
+            "regex": []
+        },
+        "outputInitially": false,
+        "stateType": "str",
+        "ifState": "",
+        "ifStateType": "str",
+        "ifStateOperator": "is",
+        "outputOnlyOnStateChange": true,
+        "for": "0",
+        "forType": "num",
+        "forUnits": "minutes",
+        "ignorePrevStateNull": false,
+        "ignorePrevStateUnknown": false,
+        "ignorePrevStateUnavailable": false,
+        "ignoreCurrentStateUnknown": false,
+        "ignoreCurrentStateUnavailable": false,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "entityState"
+            },
+            {
+                "property": "data",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "eventData"
+            },
+            {
+                "property": "topic",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "triggerId"
+            }
+        ],
+        "x": 120,
+        "y": 200,
+        "wires": [
+            [
+                "297195bc7434dcbb"
+            ]
+        ]
+    },
+    {
+        "id": "651c1121595f0f4a",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "日程",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1800",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 90,
+        "y": 660,
+        "wires": [
+            [
+                "b8528349346f9b5b"
+            ]
+        ]
+    },
+    {
+        "id": "b8528349346f9b5b",
+        "type": "api-call-service",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "server": "6e293a59.243aa4",
+        "version": 7,
+        "debugenabled": false,
+        "action": "calendar.get_events",
+        "floorId": [],
+        "areaId": [],
+        "deviceId": [],
+        "entityId": [
+            "calendar.my_calendar"
+        ],
+        "labelId": [],
+        "data": "{\t  \"start_date_time\": $now(),\t  \"duration\": {\t    \"hours\": 336\t  }\t}",
+        "dataType": "jsonata",
+        "mergeContext": "",
+        "mustacheAltTags": false,
+        "outputProperties": [
+            {
+                "property": "payload",
+                "propertyType": "msg",
+                "value": "",
+                "valueType": "results"
+            }
+        ],
+        "queue": "none",
+        "blockInputOverrides": true,
+        "domain": "calendar",
+        "service": "get_events",
+        "x": 300,
+        "y": 660,
+        "wires": [
+            [
+                "db317d9b95773aab"
+            ]
+        ]
+    },
+    {
+        "id": "db317d9b95773aab",
+        "type": "mqtt out",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "topic": "epd/calendar",
+        "qos": "",
+        "retain": "false",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "534daa9312583ab9",
+        "x": 590,
+        "y": 660,
+        "wires": []
+    },
+    {
+        "id": "26b1195fc7ae48b7",
+        "type": "mqtt out",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "topic": "epd/shift",
+        "qos": "",
+        "retain": "true",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "534daa9312583ab9",
+        "x": 640,
+        "y": 760,
+        "wires": []
+    },
+    {
+        "id": "3e54cd82525d5329",
+        "type": "mqtt in",
+        "z": "c077bc34b507c1d0",
+        "name": "排班",
+        "topic": "epd/shanyinhan/shift",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "864ad7f486eb8993",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 90,
+        "y": 760,
+        "wires": [
+            [
+                "380061e90d905d13"
+            ]
+        ]
+    },
+    {
+        "id": "d1c49f5125d74e71",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"2026-2-19\":\"日\",\"2026-2-20\":\"日\",\"2026-2-21\":\"夜\",\"2026-2-22\":\"夜休\",\"2026-2-23\":\"休\",\"2026-2-24\":\"检值\",\"2026-2-25\":\"休\",\"2026-2-26\":\"床\",\"2026-2-27\":\"检日\",\"2026-2-28\":\"休\",\"2026-3-1\":\"兰中\",\"2026-3-2\":\"责\",\"2026-3-3\":\"日\",\"2026-3-4\":\"休\"}",
+        "payloadType": "json",
+        "x": 410,
+        "y": 840,
+        "wires": [
+            [
+                "26b1195fc7ae48b7"
+            ]
+        ]
+    },
+    {
+        "id": "8a03f441192ce41e",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"2026-2-16\":\"休\",\"17​\":\"夜\",\"18​\":\"夜休\",\"19​\":\"休责\",\"20​\":\"休\",\"21​\":\"休\",\"22​\":\"兰日\",\"23​\":\"床\"}",
+        "payloadType": "json",
+        "x": 390,
+        "y": 920,
+        "wires": [
+            [
+                "26b1195fc7ae48b7"
+            ]
+        ]
+    },
+    {
+        "id": "380061e90d905d13",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "function 15",
+        "func": "// 1. 获取输入的字符串\nlet input = msg.payload; \n\n// 2. 使用正则表达式提取起始 年、月、日\nlet dateMatch = input.match(/(\\d{4})年(\\d{1,2})月(\\d{1,2})日/);\nif (!dateMatch) return null; \n\nlet year = parseInt(dateMatch[1]);\nlet startMonth = parseInt(dateMatch[2]) - 1; \nlet startDay = parseInt(dateMatch[3]);\n\n// 3. 提取排班部分\nlet parts = input.trim().split(/\\s+/);\nlet nameIndex = parts.indexOf(\"金永有\");\nif (nameIndex === -1) return null; \n\nlet shiftArray = parts.slice(nameIndex + 1);\n\n// 4. 生成结果对象\nlet result = {};\n\nfor (let i = 0; i < shiftArray.length; i++) {\n    let currentDate = new Date(year, startMonth, startDay + i);\n    \n    let y = currentDate.getFullYear();\n    let m = currentDate.getMonth() + 1;\n    let d = currentDate.getDate();\n    \n    let dateKey;\n    \n    // 判断逻辑\n    if (i === 0 || d === 1) {\n        // 第一天或每月1号：正常的年月日格式 (字符串类型，保持插入顺序)\n        dateKey = `${y}-${m}-${d}`;\n    } else {\n        // 其他日期：在数字后面加一个不可见的零宽空格 \"\\u200B\"\n        // 这会骗过 JS 引擎，让它不把这个 Key 当作数字排序，从而保持物理插入顺序\n        dateKey = d.toString() + \"\\u200B\";\n    }\n    \n    // 清理斜杠\n    let shiftName = shiftArray[i].replace(/\\//g, \"\");\n    \n    // 写入对象\n    result[dateKey] = shiftName;\n}\n\n// 5. 输出结果\nmsg.payload = result;\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 370,
+        "y": 760,
+        "wires": [
+            [
+                "26b1195fc7ae48b7",
+                "cf3b1871cb921a9f"
+            ]
+        ]
+    },
+    {
+        "id": "cc8d3e3010a9bf4f",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"2026-2-19\":\"日\",\"2026-2-20\":\"日\",\"2026-2-21\":\"夜\",\"2026-2-22\":\"夜休\",\"2026-2-23\":\"休\",\"2026-2-24\":\"检值\",\"2026-2-25\":\"休\",\"2026-2-26\":\"床\",\"2026-2-27\":\"检日\",\"2026-2-28\":\"休\",\"2026-3-1\":\"兰中\",\"2026-3-2\":\"责\",\"2026-3-3\":\"日\",\"2026-3-4\":\"休\"}",
+        "payloadType": "json",
+        "x": 650,
+        "y": 880,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "4948bf55ce033fc4",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "2026年2月16日-3月2日 金永有     休       夜       夜休     休/责      兰中       休       休       床   日  日 日 日 日  床 休",
+        "payloadType": "str",
+        "x": 100,
+        "y": 900,
+        "wires": [
+            [
+                "380061e90d905d13"
+            ]
+        ]
+    },
+    {
+        "id": "d169545332eba5bf",
+        "type": "http request",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "method": "GET",
+        "ret": "bin",
+        "paytoqs": "ignore",
+        "url": "https://devapi.qweather.com/v7/air/now?location=101210507&key=0c540a46f8a44ab6b4c60ab4cbd5f8ea",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 300,
+        "y": 560,
+        "wires": [
+            [
+                "842ddabee058d253"
+            ]
+        ]
+    },
+    {
+        "id": "8db239f672e93615",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "实时空气质量",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "1800",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 120,
+        "y": 560,
+        "wires": [
+            [
+                "d169545332eba5bf"
+            ]
+        ]
+    },
+    {
+        "id": "842ddabee058d253",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "解压",
+        "func": "// 注意：在设置里添加后，直接用 zlib 即可\ntry {\n    msg.payload = zlib.inflateSync(msg.payload).toString();\n    return msg;\n} catch (e) {\n    try {\n        msg.payload = zlib.gunzipSync(msg.payload).toString();\n        return msg;\n    } catch (err) {\n        node.error(\"解压失败: \" + err.message);\n        return null;\n    }\n}",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [
+            {
+                "var": "zlib",
+                "module": "zlib"
+            }
+        ],
+        "x": 470,
+        "y": 560,
+        "wires": [
+            [
+                "7d077f8489ac8e52"
+            ]
+        ]
+    },
+    {
+        "id": "7d077f8489ac8e52",
+        "type": "json",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "property": "payload",
+        "action": "",
+        "pretty": false,
+        "x": 650,
+        "y": 560,
+        "wires": [
+            [
+                "018b115e94852412"
+            ]
+        ]
+    },
+    {
+        "id": "018b115e94852412",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "提取信息",
+        "func": "// 1. 获取和风天气返回的数据中的 now 部分\nconst airNow = msg.payload.now;\n\n// 2. 提取需要的值并重新赋值给 msg.payload\nmsg.payload = {\n//    \"pm2p5\": airNow.pm2p5,\n    \"category\": airNow.category\n};\n\n// 3. 输出消息\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 840,
+        "y": 560,
+        "wires": [
+            [
+                "514cf7efd13433da"
+            ]
+        ]
+    },
+    {
+        "id": "cf3b1871cb921a9f",
+        "type": "mqtt out",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "topic": "epd/shift",
+        "qos": "",
+        "retain": "true",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "864ad7f486eb8993",
+        "x": 640,
+        "y": 820,
+        "wires": []
+    },
+    {
+        "id": "514cf7efd13433da",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "整合json",
+        "func": "// ================= 1. 自动识别并存储数据 =================\nlet p = msg.payload;\n\n// 判断是否为天气数组\nif (Array.isArray(p) && p.length > 0 && p[0].fxDate) {\n    flow.set(\"myWeather\", p);\n    node.status({fill:\"blue\", shape:\"dot\", text:\"已收到: 天气\"});\n} \n// 判断是否为日历信息\nelse if (p && p[\"阳历日期\"]) {\n    flow.set(\"myCalendar\", p);\n    node.status({fill:\"blue\", shape:\"dot\", text:\"已收到: 日历\"});\n} \n// 判断是否为温湿度环境信息\nelse if (p && p.temp !== undefined && p.humi !== undefined) {\n    flow.set(\"myEnv\", p);\n    node.status({fill:\"blue\", shape:\"dot\", text:\"已收到: 温湿度\"});\n}\n// 判断是否为空气质量 (可选)\nelse if (p && p.pm2p5 !== undefined) {\n    flow.set(\"myAir\", p);\n    node.status({fill:\"blue\", shape:\"dot\", text:\"已收到: 空气\"});\n}\n\n// ================= 2. 获取并检查数据是否齐备 =================\nlet weatherRaw = flow.get(\"myWeather\");\nlet calendarRaw = flow.get(\"myCalendar\");\nlet envRaw = flow.get(\"myEnv\");\nlet airRaw = flow.get(\"myAir\") || { pm2p5: \"25\", category: \"优\" }; \n\n// 如果必须的三个数据（天气、日历、温湿度）还没凑齐，就中断流程等待\nif (!weatherRaw || !calendarRaw || !envRaw) {\n    return null; \n}\n\n// ================= 3. 数据齐备，开始格式化 =================\n\n// 【修改点】: 处理日历数据，直接使用原样信息，不再精简\nconst dateData = {\n    solar: calendarRaw[\"阳历日期\"],\n    week: calendarRaw[\"星期\"],\n    lunar: calendarRaw[\"农历日期\"], // 直接输出: \"乙巳[蛇]年 腊月小廿七\"\n    term: calendarRaw[\"节气信息\"]   // 直接输出: \"距离下一节气【雨水】还有 4 天\"\n};\n\n// 处理天气数组\nconst weatherData = weatherRaw.map(day => {\n    return {\n        date: day.fxDate,\n        temp: `${day.tempMax}/${day.tempMin}`,\n        textDay: day.textDay,\n        iconDay: day.iconDay,\n        textNight: day.textNight,\n        iconNight: day.iconNight,\n        windDir: day.windDirDay,\n        windScale: String(day.windSpeedDay)\n    };\n});\n\n// 处理温湿度 (兼容字符串和数字，保留最多1位小数)\nconst formatEnvValue = (val) => {\n    let num = parseFloat(val);\n    if (isNaN(num)) return String(val);\n    return Number.isInteger(num) ? String(num) : num.toFixed(1);\n};\n\nconst envData = {\n    temp: formatEnvValue(envRaw.temp),\n    humi: formatEnvValue(envRaw.humi)\n};\n\n// ================= 4. 组装最终 JSON 并输出 =================\nmsg.payload = {\n    date: dateData,\n    weather: weatherData,\n    env: envData,\n    air: {\n        pm2p5: String(airRaw.pm2p5),\n        category: airRaw.category\n    }\n};\n// 【新增这行】：把生成的最终数据存入名叫 \"myLatestWeather\" 的全局变量中\nglobal.set(\"myLatestWeather\", msg.payload);\nnode.status({fill:\"green\", shape:\"dot\", text:\"整合成功并输出\"});\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 1160,
+        "y": 400,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "e5f108104760745a",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"temp\":\"24\",\"humi\":\"50\"}",
+        "payloadType": "json",
+        "x": 910,
+        "y": 460,
+        "wires": [
+            [
+                "514cf7efd13433da"
+            ]
+        ]
+    },
+    {
+        "id": "23eba5ac4aeb198e",
+        "type": "mqtt out",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "topic": "epd/unified",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "534daa9312583ab9",
+        "x": 670,
+        "y": 60,
+        "wires": []
+    },
+    {
+        "id": "ae49c42b22c6d11a",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "{\"date\":{\"solar\":\"2026-02-20\",\"week\":\"星期五\",\"lunar\":\"正月初八\",\"term\":\"惊蛰\"},\"weather\":[{\"date\":\"2026-02-20\",\"temp\":\"19/8\",\"textDay\":\"晴天\",\"iconDay\":\"100\",\"textNight\":\"晴\",\"iconNight\":\"150\",\"windDir\":\"南风\",\"windScale\":\"3\"},{\"date\":\"2026-02-21\",\"temp\":\"25/12\",\"textDay\":\"晴\",\"iconDay\":\"100\",\"textNight\":\"晴\",\"iconNight\":\"150\",\"windDir\":\"南风\",\"windScale\":\"3\"},{\"date\":\"2026-02-22\",\"temp\":\"23/9\",\"textDay\":\"晴\",\"iconDay\":\"100\",\"textNight\":\"晴\",\"iconNight\":\"150\",\"windDir\":\"东风\",\"windScale\":\"3\"},{\"date\":\"2026-02-23\",\"temp\":\"17/10\",\"textDay\":\"多云\",\"iconDay\":\"101\",\"textNight\":\"小雨\",\"iconNight\":\"305\",\"windDir\":\"东南风\",\"windScale\":\"3\"},{\"date\":\"2026-02-24\",\"temp\":\"14/7\",\"textDay\":\"小雨\",\"iconDay\":\"305\",\"textNight\":\"晴\",\"iconNight\":\"150\",\"windDir\":\"北风\",\"windScale\":\"3\"},{\"date\":\"2026-02-25\",\"temp\":\"14/8\",\"textDay\":\"多云\",\"iconDay\":\"101\",\"textNight\":\"小雨\",\"iconNight\":\"305\",\"windDir\":\"东风\",\"windScale\":\"3\"},{\"date\":\"2026-02-26\",\"temp\":\"14/7\",\"textDay\":\"中雨\",\"iconDay\":\"306\",\"textNight\":\"中雨\",\"iconNight\":\"306\",\"windDir\":\"北风\",\"windScale\":\"3\"}],\"env\":{\"temp\":\"13\",\"humi\":\"63\"},\"air\":{\"pm2p5\":\"25\",\"category\":\"良\"}}",
+        "payloadType": "json",
+        "x": 430,
+        "y": 140,
+        "wires": [
+            [
+                "23eba5ac4aeb198e"
+            ]
+        ]
+    },
+    {
+        "id": "e6db004915152ed6",
+        "type": "function",
+        "z": "c077bc34b507c1d0",
+        "name": "function 14",
+        "func": "// 从全局变量中提取刚才存好的数据\nlet savedData = global.get(\"myLatestWeather\");\n\nif (savedData) {\n    msg.payload = savedData;\n    return msg;\n} else {\n    node.warn(\"暂未获取到缓存的天气数据\");\n    return null;\n}",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 410,
+        "y": 60,
+        "wires": [
+            [
+                "23eba5ac4aeb198e",
+                "50ad20e2ff94deb7"
+            ]
+        ]
+    },
+    {
+        "id": "8db705651a69159a",
+        "type": "inject",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": false,
+        "onceDelay": 0.1,
+        "topic": "",
+        "payload": "",
+        "payloadType": "date",
+        "x": 130,
+        "y": 20,
+        "wires": [
+            [
+                "e6db004915152ed6"
+            ]
+        ]
+    },
+    {
+        "id": "9fe4c6a1179d9788",
+        "type": "mqtt in",
+        "z": "c077bc34b507c1d0",
+        "name": "",
+        "topic": "epd/weatherrequest",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "534daa9312583ab9",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 100,
+        "wires": [
+            [
+                "e6db004915152ed6"
+            ]
+        ]
+    },
+    {
+        "id": "50ad20e2ff94deb7",
+        "type": "debug",
+        "z": "c077bc34b507c1d0",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 660,
+        "y": 140,
+        "wires": []
+    },
+    {
+        "id": "534daa9312583ab9",
+        "type": "mqtt-broker",
+        "name": "",
+        "broker": "192.168.1.250",
+        "port": "1883",
+        "clientid": "node",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": "4",
+        "keepalive": "60",
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    },
+    {
+        "id": "6e293a59.243aa4",
+        "type": "server",
+        "name": "Home Assistant",
+        "addon": false,
+        "rejectUnauthorizedCerts": true,
+        "ha_boolean": "",
+        "connectionDelay": false,
+        "cacheJson": true,
+        "heartbeat": false,
+        "heartbeatInterval": "",
+        "areaSelector": "friendlyName",
+        "deviceSelector": "friendlyName",
+        "entitySelector": "friendlyName",
+        "statusSeparator": "",
+        "statusYear": "numeric",
+        "statusMonth": "numeric",
+        "statusDay": "numeric",
+        "statusHourCycle": "default",
+        "statusTimeFormat": "h:m",
+        "enableGlobalContextStore": false
+    },
+    {
+        "id": "864ad7f486eb8993",
+        "type": "mqtt-broker",
+        "name": "emqx",
+        "broker": "broker.emqx.io",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]
