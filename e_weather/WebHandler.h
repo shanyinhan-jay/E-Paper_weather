@@ -179,6 +179,12 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <input type='password' name='wifi_pass' value='%WIFI_PASS%' placeholder="Password">
         </div>
 
+        <h3>NTP Servers</h3>
+        <div class="grid-2-col">
+            <input type='text' name='ntp_server' value='%NTP_SERVER%' placeholder="Primary NTP Server (e.g. ntp.aliyun.com)">
+            <input type='text' name='ntp_server_2' value='%NTP_SERVER_2%' placeholder="Secondary NTP Server">
+        </div>
+
         <h3>Static IP (Optional)</h3>
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;margin-bottom:10px;">
              <input type="checkbox" name="use_static_ip" value="1" %USE_STATIC_IP% style="width:auto;margin:0;"> Enable Static IP
