@@ -998,7 +998,7 @@ void displayWeatherDashboard(bool partial_update = false) {
             }
             
             int boxW = 150;
-            int boxH = 60;
+            int boxH = 68;
             int boxX = 100 - (boxW / 2);
             int boxY = 10; // Moved box up (was 15)
             int cornerR = 10; // ~2mm
@@ -1023,9 +1023,9 @@ void displayWeatherDashboard(bool partial_update = false) {
             paint_gfx.drawFastVLine(boxX + (boxW / 2), boxY, boxH, 1);
 
             // Draw Text (Month on Left, Day on Right)
-            u8g2.setFont(u8g2_font_logisoso42_tf);
+            u8g2.setFont(u8g2_font_logisoso50_tf);
             int ascent = u8g2.getFontAscent();
-            int textY = boxY + (boxH + ascent) / 2 - 2; // Mathematically centered, then slightly adjusted for visual weight
+            int textY = boxY + (boxH + ascent) / 2; // Centered for the new font
             
             // Month: White on Black
             char monthStr[5];
@@ -1063,7 +1063,7 @@ void displayWeatherDashboard(bool partial_update = false) {
                 if (weekIcon) {
                     // Draw icon (200x36)
                     // Centering in 200px panel: 100 - (200/2) = 0.
-                    drawIconFromProgmem(weekIcon, 50, 75, 200, 36, 1);
+                    drawIconFromProgmem(weekIcon, 50, 81, 200, 36, 1);
                 } else {
                     // Fallback to text if icon not found
                     u8g2.setFont(u8g2_font_wqy12_t_gb2312);
@@ -2246,7 +2246,7 @@ void setup() {
       
       if (mqttConnected) {
           Serial.println("MQTT Connected (Setup)");
-          displayMessage("MQTT Connected!\nFetching Weather...");
+ //         displayMessage("MQTT Connected!\nFetching Weather...");
           
           // Disable AP after successful MQTT connection
           WiFi.softAPdisconnect(true);
