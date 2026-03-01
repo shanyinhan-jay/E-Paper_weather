@@ -318,11 +318,6 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
   <meta name='viewport' content='width=device-width, initial-scale=1.0'>
   <title>MQTT Configuration</title>
   %CSS%
-  <style>
-    .topic-desc { font-size: 0.85em; color: var(--text-light); margin-top: -10px; margin-bottom: 15px; display: block; }
-    code { background: #e5e7eb; padding: 2px 4px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
-    pre { background: #f3f4f6; padding: 10px; border-radius: 6px; overflow-x: auto; font-size: 0.85em; border: 1px solid var(--border); }
-  </style>
 </head>
 <body>
   <div class="container">
@@ -330,49 +325,32 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
       <h2>MQTT Topics Configuration</h2>
       <form action='/saveConfig' method='POST'>
         
-        <h3>Unified Topic (Recommended)</h3>
+        <h3>Unified Topic</h3>
         <input type='text' name='mqtt_unified_topic' value='%MQTT_UNIFIED%' placeholder="epd/unified">
-        <span class="topic-desc">
-          Single topic for all data. JSON format:
-          <pre>
-{
-  "date": { "solar": "...", "lunar": "..." },
-  "weather": [ { "temp": "...", "icon": "..." } ],
-  "env": { "temp": "...", "humi": "..." },
-  "air": { "pm2p5": "...", "category": "..." }
-}</pre>
-        </span>
 
         <h3>Weather Topic</h3>
         <input type='text' name='mqtt_weather_topic' value='%MQTT_WEATHER%' placeholder="epd/weather">
-        <span class="topic-desc">JSON: <code>[  { "date": "2023-10-27", "temp": "22/15",  "textDay": "晴", "iconDay": "100", "textNight": "晴", "iconNight": "150", "windDir": "西北风", "windScale": "3" }, ...]</code></span>
+
         <h3>Date/Calendar Topic</h3>
         <input type='text' name='mqtt_date_topic' value='%MQTT_DATE%' placeholder="epd/date">
-        <span class="topic-desc">JSON: <code>{"阳历日期":"...", "农历日期":"...", "星期":"...", "节气信息":"..."}</code></span>
 
         <h3>Environment Topic</h3>
         <input type='text' name='mqtt_env_topic' value='%MQTT_ENV%' placeholder="epd/env">
-        <span class="topic-desc">JSON: <code>{"temp":"25.5", "humi":"60"}</code></span>
 
         <h3>Air Quality Topic</h3>
         <input type='text' name='mqtt_air_quality_topic' value='%MQTT_AQI%' placeholder="epd/air_quality">
-        <span class="topic-desc">JSON: <code>{"pm2p5":"25", "category":"Good"}</code></span>
 
         <h3>Calendar Events Topic</h3>
         <input type='text' name='mqtt_calendar_topic' value='%MQTT_CALENDAR%' placeholder="epd/calendar">
-        <span class="topic-desc">JSON: <code>{"events":[{"start":"...", "summary":"..."}]}</code></span>
 
         <h3>Shift Schedule Topic</h3>
         <input type='text' name='mqtt_shift_topic' value='%MQTT_SHIFT%' placeholder="epd/shift">
-        <span class="topic-desc">JSON: <code>{"date":"...", "shift":"..."}</code> or Array</span>
 
         <h3>Text Message Topic</h3>
         <input type='text' name='mqtt_topic' value='%MQTT_TOPIC%' placeholder="epd/text">
-        <span class="topic-desc">Simple text string to display directly on screen.</span>
 
         <h3>Periodic Request Topic</h3>
         <input type='text' name='mqtt_request_topic' value='%MQTT_REQUEST%' placeholder="epd/weatherrequest">
-        <span class="topic-desc">The device publishes "get" to this topic every N minutes (configured in Request Interval). Subscribe to this topic in Node-RED to trigger data push.</span>
 
         <div class="btn-group" style="display: flex; gap: 10px;">
             <button type="button" onclick="window.location.href='/'" style="background:#6b7280; flex:1; padding:12px; font-size:16px;">Cancel</button>

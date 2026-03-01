@@ -1000,7 +1000,7 @@ void displayWeatherDashboard(bool partial_update = false) {
             int boxW = 150;
             int boxH = 68;
             int boxX = 100 - (boxW / 2);
-            int boxY = 10; // Moved box up (was 15)
+            int boxY = 5; // Moved box up (was 15)
             int cornerR = 10; // ~2mm
 
             if (hasEvent) {
@@ -1068,7 +1068,7 @@ void displayWeatherDashboard(bool partial_update = false) {
                     // Fallback to text if icon not found
                     u8g2.setFont(u8g2_font_wqy12_t_gb2312);
                     int wWidth = u8g2.getUTF8Width(weekDay.c_str());
-                    u8g2.drawUTF8(100 - (wWidth / 2), 90, weekDay.c_str());
+                    u8g2.drawUTF8(100 - (wWidth / 2), 85, weekDay.c_str());
                 }
             }
 
