@@ -14,7 +14,7 @@ extern const char* build_time;
 extern void saveConfig();
 extern void handleMqttConfig();
 extern void displayMessage(String text);
-extern void displayWeatherDashboard(bool partial_update);
+extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
 extern void displayCalendarPage(bool partial_update);
 extern bool switchPagePending;
 extern Page currentPage;

@@ -630,14 +630,6 @@ void displayCalendarPage(bool partial_update = false) {
         }
         Local_EPD_4IN2_Sleep();
         
-        // Signal DONE pin (LOW) after refresh completes (Only in DATE mode)
-        if (config.ui_mode != 0 && config.done_pin >= 0) {
-            digitalWrite(config.done_pin, LOW);
-            Serial.print("DONE pin (GPIO ");
-            Serial.print(config.done_pin);
-            Serial.println(") set to LOW");
-        }
-        
         // free(BlackImage); // Keep allocated
         // BlackImage = NULL;
     }
@@ -893,7 +885,7 @@ void drawIconFromProgmem(const unsigned char* data, int x, int y, int w, int h, 
     }
 }
 
-void displayWeatherDashboard(bool partial_update = false) {
+void displayWeatherDashboard(bool partial_update, bool sendSignal) {
     DEV_Module_Init();
     
     // Set DONE pin to HIGH at the start of refresh (Only in DATE mode)
@@ -1389,12 +1381,10 @@ void displayWeatherDashboard(bool partial_update = false) {
         }
         Local_EPD_4IN2_Sleep();
         
-        // Signal DONE pin (LOW) after refresh completes (Only in DATE mode)
-        if (config.ui_mode != 0 && config.done_pin >= 0) {
-            digitalWrite(config.done_pin, LOW);
-            Serial.print("DONE pin (GPIO ");
-            Serial.print(config.done_pin);
-            Serial.println(") set to LOW");
+        // Signal completion via Serial2 ONLY if requested (weather MQTT updates)
+        if (sendSignal) {
+            Serial2.println("bye");
+            Serial.println("Sent 'bye' via Serial2 after weather update refresh");
         }
         
         // free(BlackImage); // Keep allocated
@@ -2137,6 +2127,9 @@ void setup() {
   Serial.print("Air Quality Topic: ");
   Serial.println(config.mqtt_air_quality_topic);
 
+  // Serial2 Init (Used for "bye" signal)
+  Serial2.begin(9600, SERIAL_8N1, 16, 17);
+
 
 
 
@@ -2468,7 +2461,7 @@ void loop() {
       if (updateWeatherPending || updateEnvPending || updateDatePending || (updateCalendarPending && currentPage == PAGE_WEATHER)) {
           if (currentPage == PAGE_WEATHER) {
                Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
-               displayWeatherDashboard(!fullRefreshPending); // Use full refresh if flag is set
+               displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
           }
           updateWeatherPending = false;
           updateEnvPending = false;
