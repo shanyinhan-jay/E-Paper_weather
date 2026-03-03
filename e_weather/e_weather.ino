@@ -2160,7 +2160,7 @@ void setup() {
       WiFi.begin(config.wifi_ssid, config.wifi_pass);
       
       Serial.print("Connecting to WiFi");
-      // displayMessage("Connecting to WiFi:\n" + String(config.wifi_ssid));
+      displayMessage("Connecting to WiFi:\n" + String(config.wifi_ssid));
       int retry = 0;
       while (WiFi.status() != WL_CONNECTED && retry < 60) { // Increased to 30 seconds (was 15s)
           delay(500);
@@ -2171,7 +2171,7 @@ void setup() {
       
       if (WiFi.status() == WL_CONNECTED) {
           Serial.println("WiFi Connected! Keeping AP for MQTT...");
-          // displayMessage("WiFi Connected!\nIP: " + WiFi.localIP().toString() + "\nGW: " + WiFi.gatewayIP().toString() + "\nConnecting to MQTT...");
+          displayMessage("WiFi Connected!\nIP: " + WiFi.localIP().toString() + "\nGW: " + WiFi.gatewayIP().toString() + "\nConnecting to MQTT...");
           enableAP = true; // Keep AP enabled until MQTT connects
           WiFi.mode(WIFI_AP_STA); 
           
@@ -2180,7 +2180,7 @@ void setup() {
 
       } else {
           Serial.println("WiFi Timeout. Enabling AP.");
-          // displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
+          displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
           WiFi.mode(WIFI_AP);
       }
   } else {
@@ -2200,11 +2200,6 @@ void setup() {
       
       WiFi.softAP(ap_ssid.c_str());
       Serial.println("AP Started: " + ap_ssid);
-      
-      // If WiFi failed, show AP info so user can configure
-      if (WiFi.status() != WL_CONNECTED) {
-          displayMessage("WiFi Connect Failed!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
-      }
   }
   
   // Setup NTP (Moved to inside MQTT connect block)
