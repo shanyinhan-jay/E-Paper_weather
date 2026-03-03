@@ -2,9 +2,9 @@
 #define APP_CONFIG_H
 
 struct Config {
-  char wifi_ssid[32] = "SXDEYY-DX";
-  char wifi_pass[32] = "";
-  char mqtt_server[64] = "broker.emqx.io";
+  char wifi_ssid[32] = "Linksys-2.4G-wifi5";
+  char wifi_pass[32] = "19811201";
+  char mqtt_server[64] = "192.168.1.250";
   int  mqtt_port = 1883;
   char mqtt_user[32] = "";
   char mqtt_pass[32] = "";
