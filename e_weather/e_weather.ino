@@ -22,7 +22,8 @@
 // #include <LittleFS.h> // Already included
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
-#include <time.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
 #include "icons.h"
 #include "AppConfig.h"
 #include "WebHandler.h"
@@ -53,6 +54,8 @@ WebServer server(80);
 
 WiFiClient espClient;
 PubSubClient client(espClient);
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP); 
 UBYTE *BlackImage = NULL;
 OneButton button(BUTTON_PIN, true); // GPIO defined in DEV_Config.h, Active Low
 
@@ -109,7 +112,6 @@ bool updateCalendarPending = false;
 bool updateEnvPending = false;
 bool updateDatePending = false;
 bool fullRefreshPending = false; // Flag for full refresh instead of partial
-time_t weatherUpdateTime = 0;  // Last time weather data was successfully received
 unsigned long lastUpdateTrigger = 0;
 const unsigned long UPDATE_DELAY_MS = 200; // Wait 200ms after last message to update (debounce)
 
@@ -471,14 +473,12 @@ void displayCalendarPage(bool partial_update = false) {
         int cellH = EPD_4IN2_HEIGHT / rows; // Use full height since title is gone
         int startY = 0; // Start from top
 
-        time_t now = time(nullptr);
+        time_t now = timeClient.getEpochTime();
         const char* weekDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
 
         for (int i = 0; i < 14; i++) {
             time_t future = now + i * 86400;
-            struct tm t_val;
-            localtime_r(&future, &t_val);
-            struct tm * t = &t_val;
+            struct tm * t = gmtime(&future);
             
             int c = i % cols;
             int r = i / cols;
@@ -551,9 +551,8 @@ void displayCalendarPage(bool partial_update = false) {
             bool hasEvent = false;
             CalendarEvent targetEvent;
             for (const auto& ev : calendarEvents) {
-                 struct tm evTm;
-                 localtime_r(&ev.start_time, &evTm);
-                 if (evTm.tm_year == t_year && evTm.tm_mon == t_mon && evTm.tm_mday == t_mday) {
+                 struct tm* evTm = gmtime(&ev.start_time);
+                 if (evTm->tm_year == t_year && evTm->tm_mon == t_mon && evTm->tm_mday == t_mday) {
                      hasEvent = true;
                      targetEvent = ev;
                      break;
@@ -913,11 +912,6 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         u8g2.setForegroundColor(1);
         u8g2.setBackgroundColor(0);
 
-        time_t now = time(nullptr);
-        struct tm t_now_val;
-        localtime_r(&now, &t_now_val);
-        struct tm *t_now = &t_now_val;
-
         // --- Layout ---
         // 顶部垂直分割线 (x=200, y=5-145)
         paint_gfx.drawFastVLine(200, 5, 135, 1); 
@@ -929,21 +923,27 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         if (config.ui_mode == 0) {
             // --- TIME MODE ---
             u8g2.setFont(u8g2_font_logisoso50_tf); 
-            
-            char timeBuf[6];
-            sprintf(timeBuf, "%02d:%02d", t_now->tm_hour, t_now->tm_min);
-            int tWidth = u8g2.getUTF8Width(timeBuf);
+            String timeStr = timeClient.getFormattedTime().substring(0, 5); 
+            int tWidth = u8g2.getUTF8Width(timeStr.c_str());
             int timeX = 100 - (tWidth / 2);
-            u8g2.drawUTF8(timeX, 65, timeBuf);
+            u8g2.drawUTF8(timeX, 65, timeStr.c_str());
             
             // Check for today's event and draw bell icon
+            // Only trigger for Calendar Events (Schedule), NOT Shifts
+            time_t now = timeClient.getEpochTime();
+            struct tm *t_now = gmtime(&now);
+            int today_year = t_now->tm_year;
+            int today_mon = t_now->tm_mon;
+            int today_mday = t_now->tm_mday;
+            
             bool hasEvent = false;
             for (const auto& ev : calendarEvents) {
-                struct tm evTm;
-                localtime_r(&ev.start_time, &evTm);
-                if (evTm.tm_year == t_now->tm_year && 
-                    evTm.tm_mon == t_now->tm_mon && 
-                    evTm.tm_mday == t_now->tm_mday) {
+                // Note: Must save today's date first because gmtime uses static buffer!
+                // We already saved today_year/mon/mday above.
+                struct tm *evTm = gmtime(&ev.start_time);
+                if (evTm->tm_year == today_year && 
+                    evTm->tm_mon == today_mon && 
+                    evTm->tm_mday == today_mday) {
                     hasEvent = true;
                     break;
                 }
@@ -970,15 +970,20 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         } else {
             // --- DATE MODE ---
             // 1. Display Date in a stylized box: Rounded corners, Split colors
+            time_t now = timeClient.getEpochTime();
+            struct tm *t_now = gmtime(&now);
             
             // Check for today's event and draw bell icon
+            int today_year = t_now->tm_year;
+            int today_mon = t_now->tm_mon;
+            int today_mday = t_now->tm_mday;
+            
             bool hasEvent = false;
             for (const auto& ev : calendarEvents) {
-                struct tm evTm;
-                localtime_r(&ev.start_time, &evTm);
-                if (evTm.tm_year == t_now->tm_year && 
-                    evTm.tm_mon == t_now->tm_mon && 
-                    evTm.tm_mday == t_now->tm_mday) {
+                struct tm *evTm = gmtime(&ev.start_time);
+                if (evTm->tm_year == today_year && 
+                    evTm->tm_mon == today_mon && 
+                    evTm->tm_mday == today_mday) {
                     hasEvent = true;
                     break;
                 }
@@ -1078,7 +1083,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             int textCenterX = 340; // 用于温度显示的中心
             int panelCenterX = 300; // 整个右侧面板的中心 (200-400)
             
-            int currentHour = t_now->tm_hour;
+            int currentHour = timeClient.getHours();
             bool isNight = (currentHour >= config.day_end_hour || currentHour < config.day_start_hour);
             String iconCode = isNight ? currentForecast[0].icon_night : currentForecast[0].icon_day;
             String condText = isNight ? currentForecast[0].cond_night : currentForecast[0].cond_day;
@@ -1214,16 +1219,12 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
                      u8g2.drawUTF8(inX + inW1 + inGap, inY, envPart2.c_str());
                 }
             } else {
-                // DATE Mode: Show real Weather Update Timestamp
+                // DATE Mode: Show Update Timestamp instead of Indoor Temp/Humi
                 u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+                time_t now = timeClient.getEpochTime();
+                struct tm *t_now = gmtime(&now);
                 char timeStr[25];
-                if (weatherUpdateTime > 0) {
-                    struct tm upTm;
-                    localtime_r(&weatherUpdateTime, &upTm);
-                    sprintf(timeStr, "update: %02d-%02d %02d:%02d", upTm.tm_mon + 1, upTm.tm_mday, upTm.tm_hour, upTm.tm_min);
-                } else {
-                    sprintf(timeStr, "update: --:--");
-                }
+                sprintf(timeStr, "update: %02d-%02d %02d:%02d", t_now->tm_mon + 1, t_now->tm_mday, t_now->tm_hour, t_now->tm_min);
                 int utW = u8g2.getUTF8Width(timeStr);
                 int inY = 135;
                 u8g2.drawUTF8(panelCenterX - (utW / 2), inY, timeStr);
@@ -1451,7 +1452,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
               currentForecastCount = count;
               updateWeatherPending = true;
               fullRefreshPending = true; // Set full refresh flag for weather data
-              weatherUpdateTime = time(nullptr);
           }
           
           // 3. Parse Indoor Environment
@@ -1509,8 +1509,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                 if (doc.containsKey("humi")) indoorHumi = doc["humi"].as<String>();
                 
                 updateEnvPending = true;
-                 weatherUpdateTime = time(nullptr);
-                 lastUpdateTrigger = millis();
+                lastUpdateTrigger = millis();
             } else {
                 Serial.print("JSON Error (Env): ");
                 Serial.println(error.c_str());
@@ -1526,7 +1525,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                  if (doc.containsKey("pm2p5")) airPm2p5 = doc["pm2p5"].as<String>();
                  if (doc.containsKey("category")) airCategory = doc["category"].as<String>();
                  updateWeatherPending = true; // Refresh weather page to show new air quality
-                 weatherUpdateTime = time(nullptr);
                  lastUpdateTrigger = millis();
                  Serial.printf("Air Quality Updated: PM2.5=%s, Category=%s\n", airPm2p5.c_str(), airCategory.c_str());
              } else {
@@ -1549,11 +1547,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           std::vector<ShiftEvent> newShifts;
           
           // Use current time as default Year/Month context for parsing simple dates
-          time_t now = time(nullptr);
-        struct tm t_now;
-        localtime_r(&now, &t_now);
-        int currentYear = t_now.tm_year + 1900;
-        int currentMonth = t_now.tm_mon + 1;
+          time_t now = timeClient.getEpochTime();
+          struct tm *t_now = gmtime(&now);
+          int currentYear = t_now->tm_year + 1900;
+          int currentMonth = t_now->tm_mon + 1;
           
           // Helper lambda to add to temp list
           auto addTempShift = [&](int y, int m, int d, String c) {
@@ -1963,11 +1960,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           currentForecastCount = count;
 
           if (count > 0) {
-               updateWeatherPending = true;
-               fullRefreshPending = true; // Set full refresh flag for weather data
-               weatherUpdateTime = time(nullptr);
-               lastUpdateTrigger = millis();
-           } else {
+              updateWeatherPending = true;
+              fullRefreshPending = true; // Set full refresh flag for weather data
+              lastUpdateTrigger = millis();
+          } else {
                String prettyJson;
                serializeJsonPretty(doc, prettyJson);
                displayMessage("JSON Data (No forecast found):\n" + prettyJson);
@@ -2259,39 +2255,35 @@ void setup() {
           const char* ntp1 = (strlen(config.ntp_server) > 0) ? config.ntp_server : "ntp.aliyun.com";
           const char* ntp2 = (strlen(config.ntp_server_2) > 0) ? config.ntp_server_2 : "ntp.tencent.com";
           
-          Serial.printf("Configuring NTP: %s, %s\n", ntp1, ntp2);
-          configTime(28800, 0, ntp1, ntp2); // 8 hours * 3600 seconds
-          setenv("TZ", "CST-8", 1); // Explicitly set timezone to CST-8
-          tzset(); // Apply the new timezone setting
+          timeClient.setPoolServerName(ntp1);
+          timeClient.setTimeOffset(28800);
+          timeClient.begin(); // Start NTP
           
-          Serial.print("Waiting for NTP sync...");
+          Serial.printf("Waiting for NTP (%s)...", ntp1);
+          // Reduced retry count since we are already connected to internet
           int retry = 0;
           bool ntpSynced = false;
-          struct tm timeinfo;
+          bool usingSecondary = false;
           
-          while(retry < 30) { 
-              if (getLocalTime(&timeinfo)) {
-                  // Check if year is valid (NTP usually sets year to current, default is 1970)
-                  if (timeinfo.tm_year > 120) { // tm_year is years since 1900, 120 = 2020
-                      ntpSynced = true;
-                      break;
-                  }
+          while(retry < 10) { 
+              if (timeClient.forceUpdate()) {
+                  ntpSynced = true;
+                  break;
               }
               delay(500);
               Serial.print(".");
               retry++;
-          }
-          
-          if (ntpSynced) {
-              Serial.println(" Synced!");
-              time_t now = time(nullptr); // 获取当前时间戳 (通常是 UTC)
-              struct tm utc_timeinfo;
-              gmtime_r(&now, &utc_timeinfo); // 转换为 UTC 时间结构
-              Serial.printf("Current UTC Time: %02d:%02d:%02d\n", utc_timeinfo.tm_hour, utc_timeinfo.tm_min, utc_timeinfo.tm_sec);
               
-              struct tm local_timeinfo;
-              localtime_r(&now, &local_timeinfo); // 转换为本地时间结构 (应已应用时区)
-              Serial.printf("Current Local Time: %02d:%02d:%02d\n", local_timeinfo.tm_hour, local_timeinfo.tm_min, local_timeinfo.tm_sec);
+              // Switch to secondary after 5 attempts
+              if (retry == 5 && !usingSecondary && strlen(ntp2) > 0) {
+                  Serial.printf("\nSwitching to Secondary NTP (%s)...", ntp2);
+                  timeClient.setPoolServerName(ntp2);
+                  usingSecondary = true;
+              }
+          }
+          if (ntpSynced) {
+              Serial.println(" Synced");
+              Serial.println(timeClient.getFormattedTime());
           } else {
               Serial.println(" Timeout (Will retry in background)");
           }
@@ -2507,7 +2499,40 @@ void loop() {
   }
   
   // Optimized NTP Sync Strategy (Only if MQTT is connected)
-  // configTime handles this in the background on ESP32
+  static unsigned long lastNtpRetry = 0;
+  static int ntpRetryCount = 0;
+  static bool usingSecondaryNtp = false;
+
+  if (client.connected()) {
+      if (!timeClient.isTimeSet()) {
+          if (millis() - lastNtpRetry > 5000) { // Retry every 5 seconds
+              lastNtpRetry = millis();
+              Serial.println("NTP not synced, forcing update...");
+              if (timeClient.forceUpdate()) {
+                   Serial.println("NTP Synced (Loop)");
+                   ntpRetryCount = 0;
+              } else {
+                   ntpRetryCount++;
+                   if (ntpRetryCount >= 3) {
+                       ntpRetryCount = 0;
+                       usingSecondaryNtp = !usingSecondaryNtp;
+                       
+                       const char* ntp1 = (strlen(config.ntp_server) > 0) ? config.ntp_server : "ntp.aliyun.com";
+                       const char* ntp2 = (strlen(config.ntp_server_2) > 0) ? config.ntp_server_2 : "ntp.tencent.com";
+                       const char* nextServer = usingSecondaryNtp ? ntp2 : ntp1;
+                       
+                       Serial.printf("NTP Failed 3 times. Switching to: %s\n", nextServer);
+                       timeClient.setPoolServerName(nextServer);
+                   }
+              }
+          }
+      } else {
+          // In DATE mode, we don't need frequent NTP updates as we don't show seconds/minutes
+          if (config.ui_mode == 0) {
+              timeClient.update();
+          }
+      }
+  }
   
   // Custom Full Refresh Timer
   static unsigned long lastFullRefreshTime = millis();
@@ -2534,13 +2559,10 @@ void loop() {
    }
   
   // Check for minute change
-  time_t now_loop = time(nullptr);
-  struct tm t_loop;
-  localtime_r(&now_loop, &t_loop);
-  int currentMinute = t_loop.tm_min;
+  int currentMinute = timeClient.getMinutes();
   if (lastMinute != -1 && currentMinute != lastMinute) {
       // Minute changed
-      int currentHour = t_loop.tm_hour;
+      int currentHour = timeClient.getHours();
       
       // If it is midnight (00:00), refresh both pages fully to update date
       if (currentHour == 0 && currentMinute == 0) {
