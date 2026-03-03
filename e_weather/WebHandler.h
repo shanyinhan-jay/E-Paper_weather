@@ -165,14 +165,6 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             </label>
         </div>
 
-        <h3>Pins</h3>
-        <div class="grid-2-col">
-            <div>
-                <label>DONE Pin (GPIO)</label>
-                <input type='number' name='done_pin' value='%DONE_PIN%' placeholder="e.g. 33">
-            </div>
-        </div>
-
         <h3>WiFi</h3>
         <div class="grid-2-col">
             <input type='text' name='wifi_ssid' value='%WIFI_SSID%' placeholder="SSID">

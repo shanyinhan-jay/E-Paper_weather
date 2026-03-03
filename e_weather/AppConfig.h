@@ -4,19 +4,19 @@
 struct Config {
   char wifi_ssid[32] = "Linksys-2.4G-wifi5";
   char wifi_pass[32] = "19811201";
-  char mqtt_server[64] = "192.168.1.250";
+  char mqtt_server[64] = "broker.emqx.io";
   int  mqtt_port = 1883;
   char mqtt_user[32] = "";
   char mqtt_pass[32] = "";
-  char mqtt_topic[64] = "epd/text";
-  char mqtt_weather_topic[64] = "epd/weather";
-  char mqtt_date_topic[64] = "epd/date";
-  char mqtt_env_topic[64] = "epd/env";
-  char mqtt_calendar_topic[64] = "epd/calendar";
-  char mqtt_shift_topic[64] = "epd/shift";
-  char mqtt_air_quality_topic[64] = "epd/air_quality";
-  char mqtt_unified_topic[64] = "epd/unified"; // New unified topic
-  char mqtt_request_topic[64] = "epd/weatherrequest"; // New request topic
+  char mqtt_topic[64] = "shanyinhan/epd/text";
+  char mqtt_weather_topic[64] = "shanyinhan/epd/weather";
+  char mqtt_date_topic[64] = "shanyinhan/epd/date";
+  char mqtt_env_topic[64] = "shanyinhan/epd/env";
+  char mqtt_calendar_topic[64] = "shanyinhan/epd/calendar";
+  char mqtt_shift_topic[64] = "shanyinhan/epd/shift";
+  char mqtt_air_quality_topic[64] = "shanyinhan/epd/air_quality";
+  char mqtt_unified_topic[64] = "shanyinhan/epd/unified"; // New unified topic
+  char mqtt_request_topic[64] = "shanyinhan/epd/weatherrequest"; // New request topic
   char ntp_server[64] = "ntp.aliyun.com";
   char ntp_server_2[64] = "ntp.tencent.com";
   int full_refresh_period = 10; // minutes, 0 = disabled
@@ -27,7 +27,6 @@ struct Config {
   
   // Display Mode: 0 = Time Mode (Default), 1 = Date Mode
   int ui_mode = 1;
-  int done_pin = 33; // Default DONE pin
   
   // Static IP Configuration
   bool use_static_ip = false;

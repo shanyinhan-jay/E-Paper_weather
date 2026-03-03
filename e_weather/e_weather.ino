@@ -195,6 +195,68 @@ public:
     }
   }
 
+  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    for (int16_t i = y; i < y + h; i++) {
+      for (int16_t j = x; j < x + w; j++) {
+        drawPixel(j, i, color);
+      }
+    }
+  }
+
+  void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
+    for (int16_t i = x; i < x + w; i++) {
+      drawPixel(i, y, color);
+      drawPixel(i, y + h - 1, color);
+    }
+    for (int16_t i = y; i < y + h; i++) {
+      drawPixel(x, i, color);
+      drawPixel(x + w - 1, i, color);
+    }
+  }
+
+  void drawRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
+    // Top and bottom lines
+    for (int16_t i = x + r; i < x + w - r; i++) {
+      drawPixel(i, y, color);
+      drawPixel(i, y + h - 1, color);
+    }
+    // Left and right lines
+    for (int16_t i = y + r; i < y + h - r; i++) {
+      drawPixel(x, i, color);
+      drawPixel(x + w - 1, i, color);
+    }
+    // Corners
+    for (int16_t i = 0; i <= r; i++) {
+      for (int16_t j = 0; j <= r; j++) {
+        if (i * i + j * j <= r * r && i * i + j * j > (r - 1) * (r - 1)) {
+          drawPixel(x + r - i, y + r - j, color); // Top-left
+          drawPixel(x + w - r + i - 1, y + r - j, color); // Top-right
+          drawPixel(x + r - i, y + h - r + j - 1, color); // Bottom-left
+          drawPixel(x + w - r + i - 1, y + h - r + j - 1, color); // Bottom-right
+        }
+      }
+    }
+  }
+
+  void fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
+    // Center rectangle
+    fillRect(x + r, y, w - 2 * r, h, color);
+    // Left and right rectangles
+    fillRect(x, y + r, r, h - 2 * r, color);
+    fillRect(x + w - r, y + r, r, h - 2 * r, color);
+    // Corners
+    for (int16_t i = 0; i <= r; i++) {
+      for (int16_t j = 0; j <= r; j++) {
+        if (i * i + j * j <= r * r) {
+          drawPixel(x + r - i, y + r - j, color); // Top-left
+          drawPixel(x + w - r + i - 1, y + r - j, color); // Top-right
+          drawPixel(x + r - i, y + h - r + j - 1, color); // Bottom-left
+          drawPixel(x + w - r + i - 1, y + h - r + j - 1, color); // Bottom-right
+        }
+      }
+    }
+  }
+
   void fillCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color) {
       for(int16_t y = -r; y <= r; y++) {
           for(int16_t x = -r; x <= r; x++) {
@@ -245,7 +307,6 @@ void loadConfig() {
           config.day_end_hour = doc["day_end_hour"] | 18;
           config.invert_display = doc["invert_display"] | false;
           config.ui_mode = doc["ui_mode"] | 0;
-          config.done_pin = doc["done_pin"] | 33;
           
           config.use_static_ip = doc["use_static_ip"] | false;
           strlcpy(config.static_ip, doc["static_ip"] | "", sizeof(config.static_ip));
@@ -296,7 +357,6 @@ void saveConfig() {
   doc["day_end_hour"] = config.day_end_hour;
   doc["invert_display"] = config.invert_display;
   doc["ui_mode"] = config.ui_mode;
-  doc["done_pin"] = config.done_pin;
   
   doc["use_static_ip"] = config.use_static_ip;
   doc["static_ip"] = config.static_ip;
@@ -436,11 +496,6 @@ void displayCalendarPage(bool partial_update = false) {
     Serial.println(shiftEvents.size());
 
     DEV_Module_Init();
-    
-    // Set DONE pin to HIGH at the start of refresh (Only in DATE mode)
-    if (config.ui_mode != 0 && config.done_pin >= 0) {
-        digitalWrite(config.done_pin, HIGH);
-    }
     
     if (BlackImage == NULL) {
          Serial.println("Error: BlackImage is NULL (Should be allocated in setup)");
@@ -887,11 +942,6 @@ void drawIconFromProgmem(const unsigned char* data, int x, int y, int w, int h, 
 
 void displayWeatherDashboard(bool partial_update, bool sendSignal) {
     DEV_Module_Init();
-    
-    // Set DONE pin to HIGH at the start of refresh (Only in DATE mode)
-    if (config.ui_mode != 0 && config.done_pin >= 0) {
-        digitalWrite(config.done_pin, HIGH);
-    }
     
     if (BlackImage == NULL) {
          Serial.println("Error: BlackImage is NULL (Should be allocated in setup)");
@@ -2118,12 +2168,6 @@ void setup() {
   // Load Config
   loadConfig();
   
-  // Initialize DONE pin (Only in DATE mode)
-  if (config.ui_mode != 0 && config.done_pin >= 0) {
-      pinMode(config.done_pin, OUTPUT);
-      digitalWrite(config.done_pin, HIGH); // Default HIGH
-  }
-  
   Serial.print("Air Quality Topic: ");
   Serial.println(config.mqtt_air_quality_topic);
 
@@ -2170,10 +2214,10 @@ void setup() {
       Serial.println();
       
       if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("WiFi Connected! Keeping AP for MQTT...");
-          displayMessage("WiFi Connected!\nIP: " + WiFi.localIP().toString() + "\nGW: " + WiFi.gatewayIP().toString() + "\nConnecting to MQTT...");
-          enableAP = true; // Keep AP enabled until MQTT connects
-          WiFi.mode(WIFI_AP_STA); 
+          Serial.println("WiFi Connected! Skipping AP as UI is accessible via IP.");
+          displayMessage("WiFi Connected!\nIP: " + WiFi.localIP().toString() + "\nConnecting to MQTT...");
+          enableAP = false; // Do not enable AP if WiFi is connected
+          WiFi.mode(WIFI_STA); 
           
           // NTP Setup removed from here, moved to after MQTT connect
 
@@ -2182,6 +2226,7 @@ void setup() {
           Serial.println("WiFi Timeout. Enabling AP.");
           displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
           WiFi.mode(WIFI_AP);
+          enableAP = true;
       }
   } else {
       WiFi.mode(WIFI_AP);
@@ -2407,14 +2452,22 @@ void loop() {
   // MQTT Blocking Check (If failed to connect, stop everything else)
   if (mqttGiveUp) {
       if (!mqttWarningShown) {
-           Serial.println("MQTT Failed (Persistent). AP Enabled.");
-           // Ensure AP is active for config
-           if ((WiFi.getMode() & WIFI_AP) == 0) {
-                WiFi.mode(WIFI_AP_STA);
-                WiFi.softAP(ap_ssid.c_str());
+           Serial.println("MQTT Failed (Persistent). Checking WiFi status...");
+           
+           if (WiFi.status() == WL_CONNECTED) {
+               Serial.println("WiFi connected, skipping AP. Showing MQTT error on screen.");
+               String msg = "MQTT 连接失败 (MQTT Connection Failed)\n请检查 MQTT 服务器配置。\n(Check MQTT config)\n\n可通过 IP 访问 UI (Access UI via IP):\n" + WiFi.localIP().toString();
+               displayMessage(msg);
+           } else {
+               Serial.println("WiFi not connected, enabling AP.");
+               // Ensure AP is active for config
+               if ((WiFi.getMode() & WIFI_AP) == 0) {
+                    WiFi.mode(WIFI_AP_STA);
+                    WiFi.softAP(ap_ssid.c_str());
+               }
+               String msg = "MQTT 连接失败 & WiFi 未连接\n(MQTT & WiFi Connection Failed)\n\n请连接 AP 进行配置 (Connect AP to config):\nSSID: " + ap_ssid;
+               displayMessage(msg);
            }
- //          String msg = "MQTT Connect Failed\nConfig via AP: " + ap_ssid + "\nOr IP: " + WiFi.localIP().toString();
- //          displayMessage(msg);
            mqttWarningShown = true;
       }
       // Do NOT return here, allow server.handleClient() to run in loop

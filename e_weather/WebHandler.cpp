@@ -31,7 +31,6 @@ String processor(const String& var) {
   if(var == "STATIC_DNS") return String(config.static_dns);
   if(var == "UI_MODE_0") return config.ui_mode == 0 ? "checked" : "";
   if(var == "UI_MODE_1") return config.ui_mode == 1 ? "checked" : "";
-  if(var == "DONE_PIN") return String(config.done_pin);
   if(var == "BUILD_DATE") return String(build_date);
   if(var == "BUILD_TIME") return String(build_time);
   return String();
@@ -81,8 +80,6 @@ void handleRoot() {
       html.replace("%UI_MODE_1%", "");
   }
   
-  html.replace("%DONE_PIN%", String(config.done_pin));
-
   if (config.invert_display) {
       html.replace("%INVERT_0%", "");
       html.replace("%INVERT_1%", "checked");
@@ -240,18 +237,6 @@ void handleSaveConfig() {
   
   if (server.hasArg("invert_display")) config.invert_display = (server.arg("invert_display") == "1");
   if (server.hasArg("ui_mode")) config.ui_mode = server.arg("ui_mode").toInt();
-    if (server.hasArg("done_pin")) {
-        int old_pin = config.done_pin;
-        config.done_pin = server.arg("done_pin").toInt();
-        // Only re-init if mode is DATE mode
-        if (config.ui_mode != 0 && old_pin != config.done_pin) {
-            if (old_pin >= 0) pinMode(old_pin, INPUT); // Release old
-            if (config.done_pin >= 0) {
-                pinMode(config.done_pin, OUTPUT);
-                digitalWrite(config.done_pin, HIGH);
-            }
-        }
-    }
 
   // Static IP Handling
   if (server.hasArg("use_static_ip")) config.use_static_ip = true;
