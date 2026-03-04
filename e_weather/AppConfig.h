@@ -27,6 +27,8 @@ struct Config {
   
   // Display Mode: 0 = Time Mode (Default), 1 = Date Mode
   int ui_mode = 1;
+  int adc_pin = 34; // Default ADC pin for battery monitoring
+  float adc_ratio = 2.0; // Voltage divider ratio (e.g., 2.0 for 100k/100k)
   
   // Static IP Configuration
   bool use_static_ip = false;

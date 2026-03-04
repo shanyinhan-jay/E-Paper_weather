@@ -4,43 +4,15 @@
 #include "Local_EPD_4in2.h"
 #include "GUI_Paint.h"
 
-// Helper to replace placeholders
-String processor(const String& var) {
-  if(var == "WIFI_SSID") return String(config.wifi_ssid);
-  if(var == "WIFI_PASS") return String(config.wifi_pass);
-  if(var == "MQTT_SERVER") return String(config.mqtt_server);
-  if(var == "MQTT_PORT") return String(config.mqtt_port);
-  if(var == "MQTT_USER") return String(config.mqtt_user);
-  if(var == "MQTT_PASS") return String(config.mqtt_pass);
-  if(var == "MQTT_TOPIC") return String(config.mqtt_topic);
-  if(var == "MQTT_WEATHER") return String(config.mqtt_weather_topic);
-  if(var == "MQTT_DATE") return String(config.mqtt_date_topic);
-  if(var == "MQTT_ENV") return String(config.mqtt_env_topic);
-  if(var == "MQTT_CALENDAR") return String(config.mqtt_calendar_topic);
-  if(var == "MQTT_SHIFT") return String(config.mqtt_shift_topic);
-  if(var == "MQTT_AQI") return String(config.mqtt_air_quality_topic);
-  if(var == "MQTT_UNIFIED") return String(config.mqtt_unified_topic);
-  if(var == "MQTT_REQUEST") return String(config.mqtt_request_topic);
-  if(var == "FULL_REFRESH") return String(config.full_refresh_period);
-  if(var == "REQUEST_INTERVAL") return String(config.request_interval);
-  if(var == "DAY_START") return String(config.day_start_hour);
-  if(var == "DAY_END") return String(config.day_end_hour);
-  if(var == "STATIC_IP") return String(config.static_ip);
-  if(var == "STATIC_GW") return String(config.static_gw);
-  if(var == "STATIC_MASK") return String(config.static_mask);
-  if(var == "STATIC_DNS") return String(config.static_dns);
-  if(var == "UI_MODE_0") return config.ui_mode == 0 ? "checked" : "";
-  if(var == "UI_MODE_1") return config.ui_mode == 1 ? "checked" : "";
-  if(var == "BUILD_DATE") return String(build_date);
-  if(var == "BUILD_TIME") return String(build_time);
-  return String();
-}
-
 void handleRoot() {
   String html = INDEX_HTML_TEMPLATE;
+  Serial.print("HTML Length: "); Serial.println(html.length());
   
   // Replace placeholders manually since server.send() doesn't support template processor directly like ESPAsyncWebServer
   // A more efficient way would be to stream it, but for simplicity we replace strings
+  html.replace("%BATTERY_VOLTAGE%", String(getBatteryVoltage(), 2));
+  html.replace("%BUILD_DATE%", String(build_date));
+  html.replace("%BUILD_TIME%", String(build_time));
   html.replace("%CSS%", COMMON_CSS);
   html.replace("%WIFI_SSID%", String(config.wifi_ssid));
   html.replace("%WIFI_PASS%", String(config.wifi_pass));
@@ -80,6 +52,9 @@ void handleRoot() {
       html.replace("%UI_MODE_1%", "");
   }
   
+  html.replace("%ADC_PIN%", String(config.adc_pin));
+  html.replace("%ADC_RATIO%", String(config.adc_ratio, 2));
+
   if (config.invert_display) {
       html.replace("%INVERT_0%", "");
       html.replace("%INVERT_1%", "checked");
@@ -87,9 +62,6 @@ void handleRoot() {
       html.replace("%INVERT_0%", "checked");
       html.replace("%INVERT_1%", "");
   }
-  
-  html.replace("%BUILD_DATE%", String(build_date));
-  html.replace("%BUILD_TIME%", String(build_time));
   
   server.send(200, "text/html", html);
 }
@@ -175,17 +147,20 @@ void handleUpdateFirmware() {
   if (upload.status == UPLOAD_FILE_START) {
     Serial.printf("Update: %s\n", upload.filename.c_str());
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // start with max available size
+      Serial.print("Update.begin error: ");
       Update.printError(Serial);
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
     /* flashing firmware to ESP */
     if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
+      Serial.print("Update.write error: ");
       Update.printError(Serial);
     }
   } else if (upload.status == UPLOAD_FILE_END) {
     if (Update.end(true)) { // true to set the size to the current progress
-      Serial.printf("Update Success: %u\n", upload.totalSize);
+      Serial.printf("Update Success: %u bytes. Rebooting...\n", upload.totalSize);
     } else {
+      Serial.print("Update.end error: ");
       Update.printError(Serial);
     }
   }
@@ -237,6 +212,8 @@ void handleSaveConfig() {
   
   if (server.hasArg("invert_display")) config.invert_display = (server.arg("invert_display") == "1");
   if (server.hasArg("ui_mode")) config.ui_mode = server.arg("ui_mode").toInt();
+  if (server.hasArg("adc_pin")) config.adc_pin = server.arg("adc_pin").toInt();
+  if (server.hasArg("adc_ratio")) config.adc_ratio = server.arg("adc_ratio").toFloat();
 
   // Static IP Handling
   if (server.hasArg("use_static_ip")) config.use_static_ip = true;

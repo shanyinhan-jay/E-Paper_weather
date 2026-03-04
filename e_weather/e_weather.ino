@@ -6,6 +6,7 @@
 - RST : 26
 - DC : 27
 - BUSY : 25
+- ADC :34
 */
 // Serial2 Communication
 
@@ -245,6 +246,8 @@ void loadConfig() {
           config.day_end_hour = doc["day_end_hour"] | 18;
           config.invert_display = doc["invert_display"] | false;
           config.ui_mode = doc["ui_mode"] | 0;
+          config.adc_pin = doc["adc_pin"] | 34;
+          config.adc_ratio = doc["adc_ratio"] | 2.0;
           
           config.use_static_ip = doc["use_static_ip"] | false;
           strlcpy(config.static_ip, doc["static_ip"] | "", sizeof(config.static_ip));
@@ -295,6 +298,8 @@ void saveConfig() {
   doc["day_end_hour"] = config.day_end_hour;
   doc["invert_display"] = config.invert_display;
   doc["ui_mode"] = config.ui_mode;
+  doc["adc_pin"] = config.adc_pin;
+  doc["adc_ratio"] = config.adc_ratio;
   
   doc["use_static_ip"] = config.use_static_ip;
   doc["static_ip"] = config.static_ip;
@@ -308,6 +313,24 @@ void saveConfig() {
   }
   serializeJson(doc, configFile);
   configFile.close();
+}
+
+float getBatteryVoltage() {
+    if (config.adc_pin < 0) return 0.0;
+    
+    Serial.println("getBatteryVoltage called");
+    // Smooth reading with multiple samples
+    uint32_t sum = 0;
+    for (int i = 0; i < 10; i++) {
+        sum += analogRead(config.adc_pin);
+        delay(10);
+    }
+    float avgAdc = sum / 10.0;
+    
+    // 12-bit ADC (0-4095) with 3.3V reference
+    // Voltage = ADC * (3.3 / 4095.0) * ratio
+    float voltage = avgAdc * (3.3 / 4095.0) * config.adc_ratio;
+    return voltage;
 }
 
 void displayMessage(String text) {

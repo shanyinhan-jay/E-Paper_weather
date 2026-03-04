@@ -13,6 +13,7 @@ extern WebServer server;extern const char* build_date;
 extern const char* build_time;
 extern void saveConfig();
 extern void handleMqttConfig();
+extern float getBatteryVoltage();
 extern void displayMessage(String text);
 extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
 extern void displayCalendarPage(bool partial_update);
@@ -122,6 +123,10 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
   <div class="container">
     <div style="text-align:center; margin-bottom:30px;">
       <h1>E-Paper Control</h1>
+      <div style="display: flex; justify-content: center; gap: 15px; color: var(--text-light); font-size: 0.9rem;">
+        <span>Battery: <strong style="color: var(--primary);">%BATTERY_VOLTAGE%V</strong></span>
+        <span>Build: <strong>%BUILD_DATE% %BUILD_TIME%</strong></span>
+      </div>
     </div>
 
     <div class="card">
@@ -163,6 +168,18 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
                 <input type="radio" name="invert_display" value="1" %INVERT_1% style="width:auto;margin:0;"> Black Background
             </label>
+        </div>
+
+        <h3>ADC Settings (Battery)</h3>
+        <div class="grid-2-col">
+            <div>
+                <label>ADC Pin (GPIO)</label>
+                <input type='number' name='adc_pin' value='%ADC_PIN%' placeholder="e.g. 34">
+            </div>
+            <div>
+                <label>Divider Ratio</label>
+                <input type='number' name='adc_ratio' step="0.01" value='%ADC_RATIO%' placeholder="e.g. 2.0">
+            </div>
         </div>
 
         <h3>WiFi</h3>
