@@ -195,68 +195,6 @@ public:
     }
   }
 
-  void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    for (int16_t i = y; i < y + h; i++) {
-      for (int16_t j = x; j < x + w; j++) {
-        drawPixel(j, i, color);
-      }
-    }
-  }
-
-  void drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-    for (int16_t i = x; i < x + w; i++) {
-      drawPixel(i, y, color);
-      drawPixel(i, y + h - 1, color);
-    }
-    for (int16_t i = y; i < y + h; i++) {
-      drawPixel(x, i, color);
-      drawPixel(x + w - 1, i, color);
-    }
-  }
-
-  void drawRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
-    // Top and bottom lines
-    for (int16_t i = x + r; i < x + w - r; i++) {
-      drawPixel(i, y, color);
-      drawPixel(i, y + h - 1, color);
-    }
-    // Left and right lines
-    for (int16_t i = y + r; i < y + h - r; i++) {
-      drawPixel(x, i, color);
-      drawPixel(x + w - 1, i, color);
-    }
-    // Corners
-    for (int16_t i = 0; i <= r; i++) {
-      for (int16_t j = 0; j <= r; j++) {
-        if (i * i + j * j <= r * r && i * i + j * j > (r - 1) * (r - 1)) {
-          drawPixel(x + r - i, y + r - j, color); // Top-left
-          drawPixel(x + w - r + i - 1, y + r - j, color); // Top-right
-          drawPixel(x + r - i, y + h - r + j - 1, color); // Bottom-left
-          drawPixel(x + w - r + i - 1, y + h - r + j - 1, color); // Bottom-right
-        }
-      }
-    }
-  }
-
-  void fillRoundRect(int16_t x, int16_t y, int16_t w, int16_t h, int16_t r, uint16_t color) {
-    // Center rectangle
-    fillRect(x + r, y, w - 2 * r, h, color);
-    // Left and right rectangles
-    fillRect(x, y + r, r, h - 2 * r, color);
-    fillRect(x + w - r, y + r, r, h - 2 * r, color);
-    // Corners
-    for (int16_t i = 0; i <= r; i++) {
-      for (int16_t j = 0; j <= r; j++) {
-        if (i * i + j * j <= r * r) {
-          drawPixel(x + r - i, y + r - j, color); // Top-left
-          drawPixel(x + w - r + i - 1, y + r - j, color); // Top-right
-          drawPixel(x + r - i, y + h - r + j - 1, color); // Bottom-left
-          drawPixel(x + w - r + i - 1, y + h - r + j - 1, color); // Bottom-right
-        }
-      }
-    }
-  }
-
   void fillCircle(int16_t x0, int16_t y0, int16_t r, uint16_t color) {
       for(int16_t y = -r; y <= r; y++) {
           for(int16_t x = -r; x <= r; x++) {
@@ -2203,21 +2141,16 @@ void setup() {
 
       WiFi.begin(config.wifi_ssid, config.wifi_pass);
       
-      Serial.print("Connecting to WiFi");
-      displayMessage("Connecting to WiFi:\n" + String(config.wifi_ssid));
       int retry = 0;
       while (WiFi.status() != WL_CONNECTED && retry < 60) { // Increased to 30 seconds (was 15s)
           delay(500);
-          Serial.print(".");
           retry++;
       }
-      Serial.println();
       
       if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("WiFi Connected! Skipping AP as UI is accessible via IP.");
-          displayMessage("WiFi Connected!\nIP: " + WiFi.localIP().toString() + "\nConnecting to MQTT...");
-          enableAP = false; // Do not enable AP if WiFi is connected
-          WiFi.mode(WIFI_STA); 
+          Serial.println("WiFi Connected! Keeping AP for MQTT...");
+          enableAP = true; // Keep AP enabled until MQTT connects
+          WiFi.mode(WIFI_AP_STA); 
           
           // NTP Setup removed from here, moved to after MQTT connect
 
@@ -2226,7 +2159,6 @@ void setup() {
           Serial.println("WiFi Timeout. Enabling AP.");
           displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
           WiFi.mode(WIFI_AP);
-          enableAP = true;
       }
   } else {
       WiFi.mode(WIFI_AP);
@@ -2270,21 +2202,17 @@ void setup() {
 
       int mqttRetry = 0;
       bool mqttConnected = false;
-      Serial.print("Connecting to MQTT");
       while (mqttRetry < 30 && !mqttConnected) { // 15 seconds
           if (client.connect(clientId.c_str(), config.mqtt_user, config.mqtt_pass)) {
               mqttConnected = true;
           } else {
               delay(500);
-              Serial.print(".");
               mqttRetry++;
           }
       }
-      Serial.println();
       
       if (mqttConnected) {
           Serial.println("MQTT Connected (Setup)");
- //         displayMessage("MQTT Connected!\nFetching Weather...");
           
           // Disable AP after successful MQTT connection
           WiFi.softAPdisconnect(true);
@@ -2311,7 +2239,6 @@ void setup() {
                   break;
               }
               delay(500);
-              Serial.print(".");
               retry++;
               
               // Switch to secondary after 5 attempts
@@ -2349,6 +2276,7 @@ void setup() {
       } else {
           Serial.print("MQTT Connect failed, rc=");
           Serial.println(client.state());
+          displayMessage("MQTT Connect failed!\nCheck Broker Config.");
       }
   }
 
@@ -2429,7 +2357,7 @@ void loop() {
       if (WiFi.status() != WL_CONNECTED) {
           if (!wifiWarningShown) {
               Serial.println("WiFi Lost, showing warning");
- //             displayMessage("WiFi Connection Lost\nAP Enabled: " + ap_ssid);
+              displayMessage("WiFi Connection Lost\nAP Enabled: " + ap_ssid);
               wifiWarningShown = true;
               
               // Ensure AP is active
@@ -2442,9 +2370,7 @@ void loop() {
       } else {
           if (wifiWarningShown) {
               Serial.println("WiFi Restored");
- //             displayMessage("WiFi Connected!");
               wifiWarningShown = false;
- //             delay(2000); 
           }
       }
   }
@@ -2452,22 +2378,14 @@ void loop() {
   // MQTT Blocking Check (If failed to connect, stop everything else)
   if (mqttGiveUp) {
       if (!mqttWarningShown) {
-           Serial.println("MQTT Failed (Persistent). Checking WiFi status...");
-           
-           if (WiFi.status() == WL_CONNECTED) {
-               Serial.println("WiFi connected, skipping AP. Showing MQTT error on screen.");
-               String msg = "MQTT 连接失败 (MQTT Connection Failed)\n请检查 MQTT 服务器配置。\n(Check MQTT config)\n\n可通过 IP 访问 UI (Access UI via IP):\n" + WiFi.localIP().toString();
-               displayMessage(msg);
-           } else {
-               Serial.println("WiFi not connected, enabling AP.");
-               // Ensure AP is active for config
-               if ((WiFi.getMode() & WIFI_AP) == 0) {
-                    WiFi.mode(WIFI_AP_STA);
-                    WiFi.softAP(ap_ssid.c_str());
-               }
-               String msg = "MQTT 连接失败 & WiFi 未连接\n(MQTT & WiFi Connection Failed)\n\n请连接 AP 进行配置 (Connect AP to config):\nSSID: " + ap_ssid;
-               displayMessage(msg);
+           Serial.println("MQTT Failed (Persistent). AP Enabled.");
+           // Ensure AP is active for config
+           if ((WiFi.getMode() & WIFI_AP) == 0) {
+                WiFi.mode(WIFI_AP_STA);
+                WiFi.softAP(ap_ssid.c_str());
            }
+           String msg = "MQTT Connect Failed\nConfig via AP: " + ap_ssid + "\nOr IP: " + WiFi.localIP().toString();
+           displayMessage(msg);
            mqttWarningShown = true;
       }
       // Do NOT return here, allow server.handleClient() to run in loop
@@ -2483,12 +2401,11 @@ void loop() {
                   lastMqttRetry = now;
                   
                   if (!mqttWarningShown) {
-//                       displayMessage("MQTT Connection Lost\nReconnecting...");
+                       displayMessage("MQTT Connection Lost\nReconnecting...");
                        mqttWarningShown = true;
                   }
                   
                   if (reconnect()) {
- //                      displayMessage("MQTT Connected!\nFetching Weather...");
                        mqttWarningShown = false;
                        // Disable AP if reconnected
                        WiFi.softAPdisconnect(true);

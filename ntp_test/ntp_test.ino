@@ -9,7 +9,7 @@ const char* password = "19811201";
 
 // --- NTPClient 配置 ---
 WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP, "192.168.1.249", 28800, 60000);
+NTPClient timeClient(ntpUDP, "ntp.aliyun.com", 28800, 60000);
 
 void setup() {
   Serial.begin(115200);
@@ -43,7 +43,7 @@ void setup() {
 
   // 2. 测试 NTPClient (当前代码使用的方法)
   Serial.println("\n--- 测试 NTPClient (库) ---");
-  const char* servers[] = {"192.168.1.249", "ntp.tencent.com", "cn.pool.ntp.org", "time.google.com"};
+  const char* servers[] = {"ntp.aliyun.com", "ntp.tencent.com", "cn.pool.ntp.org", "time.google.com"};
   
   for (int i = 0; i < 4; i++) {
     Serial.printf("尝试服务器: %s ... ", servers[i]);
