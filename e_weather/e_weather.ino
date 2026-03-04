@@ -2120,6 +2120,7 @@ void handleButtonLongPress() {
 }
 
 unsigned long lastMqttRetry = 0;
+int mqttRetryCounter = 0; // New counter for MQTT retries
 bool wifiWarningShown = false;
 bool mqttWarningShown = false;
 bool mqttGiveUp = false; // Add give up flag
@@ -2440,31 +2441,32 @@ void loop() {
               if (now - lastMqttRetry > 5000) {
                   lastMqttRetry = now;
                   
-                  if (!mqttWarningShown) {
-                       displayMessage("MQTT Connection Lost\nReconnecting...");
-                       mqttWarningShown = true;
-                  }
-                  
                   if (reconnect()) {
+                       mqttRetryCounter = 0;
                        mqttWarningShown = false;
                        // Disable AP if reconnected
                        WiFi.softAPdisconnect(true);
                        WiFi.mode(WIFI_STA);
                   } else {
-                       // If reconnect fails, give up
-                       mqttGiveUp = true;
-                       mqttWarningShown = false; // Reset so blocking block can show message
-                       Serial.println("MQTT Connect Failed, giving up");
+                       mqttRetryCounter++;
+                       Serial.printf("MQTT Reconnect failed (%d/3)\n", mqttRetryCounter);
+                       
+                       if (mqttRetryCounter >= 3 && !mqttWarningShown) {
+                            displayMessage("MQTT Connection Failed\nBroker not reachable.");
+                            mqttWarningShown = true;
+                            // Optionally set mqttGiveUp = true if you want to stop retrying
+                            // mqttGiveUp = true; 
+                       }
                   }
               }
           }
       } else {
           client.loop();
-
-
-
-
+          mqttRetryCounter = 0; // Reset counter on success
           mqttGiveUp = false; // Reset give up flag on successful connection
+          mqttWarningShown = false;
+      }
+  }
   
   // Handle deferred updates
   if (millis() - lastUpdateTrigger > UPDATE_DELAY_MS) {
@@ -2486,9 +2488,6 @@ void loop() {
                displayCalendarPage(true);
           }
           updateCalendarPending = false;
-      }
-  }
-          mqttWarningShown = false;
       }
   }
   
