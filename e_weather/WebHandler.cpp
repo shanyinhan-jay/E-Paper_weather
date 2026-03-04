@@ -10,7 +10,13 @@ void handleRoot() {
   
   // Replace placeholders manually since server.send() doesn't support template processor directly like ESPAsyncWebServer
   // A more efficient way would be to stream it, but for simplicity we replace strings
-  html.replace("%BATTERY_VOLTAGE%", String(getBatteryVoltage(), 2));
+  if (config.battery_mode) {
+      String batHtml = "<span>Battery: <strong style='color: var(--primary);'>" + String(getBatteryVoltage(), 2) + "V</strong></span>";
+      html.replace("%BATTERY_INFO%", batHtml);
+  } else {
+      html.replace("%BATTERY_INFO%", "");
+  }
+  
   html.replace("%BUILD_DATE%", String(build_date));
   html.replace("%BUILD_TIME%", String(build_time));
   html.replace("%CSS%", COMMON_CSS);
@@ -54,6 +60,8 @@ void handleRoot() {
   
   html.replace("%ADC_PIN%", String(config.adc_pin));
   html.replace("%ADC_RATIO%", String(config.adc_ratio, 2));
+  html.replace("%LOW_BATTERY_THRESHOLD%", String(config.low_battery_threshold, 2));
+  html.replace("%BATTERY_MODE%", config.battery_mode ? "checked" : "");
 
   if (config.invert_display) {
       html.replace("%INVERT_0%", "");
@@ -214,6 +222,8 @@ void handleSaveConfig() {
   if (server.hasArg("ui_mode")) config.ui_mode = server.arg("ui_mode").toInt();
   if (server.hasArg("adc_pin")) config.adc_pin = server.arg("adc_pin").toInt();
   if (server.hasArg("adc_ratio")) config.adc_ratio = server.arg("adc_ratio").toFloat();
+  if (server.hasArg("low_battery_threshold")) config.low_battery_threshold = server.arg("low_battery_threshold").toFloat();
+  if (server.hasArg("battery_mode")) config.battery_mode = true; else config.battery_mode = false;
 
   // Static IP Handling
   if (server.hasArg("use_static_ip")) config.use_static_ip = true;

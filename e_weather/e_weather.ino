@@ -248,6 +248,8 @@ void loadConfig() {
           config.ui_mode = doc["ui_mode"] | 0;
           config.adc_pin = doc["adc_pin"] | 34;
           config.adc_ratio = doc["adc_ratio"] | 2.0;
+          config.low_battery_threshold = doc["low_battery_threshold"] | 3.3;
+          config.battery_mode = doc["battery_mode"] | false;
           
           config.use_static_ip = doc["use_static_ip"] | false;
           strlcpy(config.static_ip, doc["static_ip"] | "", sizeof(config.static_ip));
@@ -300,6 +302,8 @@ void saveConfig() {
   doc["ui_mode"] = config.ui_mode;
   doc["adc_pin"] = config.adc_pin;
   doc["adc_ratio"] = config.adc_ratio;
+  doc["low_battery_threshold"] = config.low_battery_threshold;
+  doc["battery_mode"] = config.battery_mode;
   
   doc["use_static_ip"] = config.use_static_ip;
   doc["static_ip"] = config.static_ip;
@@ -2129,6 +2133,20 @@ void setup() {
   // Load Config
   loadConfig();
   
+  // Check for low battery at startup
+  float currentVoltage = getBatteryVoltage();
+  if (config.battery_mode && currentVoltage > 0.1 && currentVoltage < config.low_battery_threshold) {
+      Serial.printf("Low Battery Detected: %.2fV (Threshold: %.2fV)\n", currentVoltage, config.low_battery_threshold);
+      String warnMsg = "LOW BATTERY WARNING!\nVoltage: " + String(currentVoltage, 2) + "V\nPlease charge the device.";
+      displayMessage(warnMsg);
+      
+      // Stop execution and go to deep sleep if possible or just loop forever
+      // For now, we loop forever to prevent further battery drain from WiFi/Display
+      while(1) {
+          delay(1000);
+      }
+  }
+  
   Serial.print("Air Quality Topic: ");
   Serial.println(config.mqtt_air_quality_topic);
 
@@ -2140,7 +2158,7 @@ void setup() {
 
 
   // Setup WiFi
-  bool enableAP = true;
+  bool enableAP = false;
   
   if (strlen(config.wifi_ssid) > 0) {
       WiFi.mode(WIFI_STA);
@@ -2171,19 +2189,15 @@ void setup() {
       }
       
       if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("WiFi Connected! Keeping AP for MQTT...");
-          enableAP = true; // Keep AP enabled until MQTT connects
-          WiFi.mode(WIFI_AP_STA); 
-          
-          // NTP Setup removed from here, moved to after MQTT connect
-
-
+          Serial.println("WiFi Connected!");
+          // AP remains disabled unless WiFi fails or is not configured
       } else {
           Serial.println("WiFi Timeout. Enabling AP.");
-          displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
+          enableAP = true;
           WiFi.mode(WIFI_AP);
       }
   } else {
+      enableAP = true;
       WiFi.mode(WIFI_AP);
   }
   
@@ -2200,6 +2214,7 @@ void setup() {
       
       WiFi.softAP(ap_ssid.c_str());
       Serial.println("AP Started: " + ap_ssid);
+      displayMessage("WiFi Timeout!\nAP Started: " + ap_ssid + "\nIP: 192.168.4.1");
   }
   
   // Setup NTP (Moved to inside MQTT connect block)
@@ -2237,10 +2252,12 @@ void setup() {
       if (mqttConnected) {
           Serial.println("MQTT Connected (Setup)");
           
-          // Disable AP after successful MQTT connection
-          WiFi.softAPdisconnect(true);
-          WiFi.mode(WIFI_STA);
-          Serial.println("MQTT Connected! AP Disabled.");
+          // Disable AP ONLY if it was enabled (optional, but safe)
+          if (enableAP) {
+              WiFi.softAPdisconnect(true);
+              WiFi.mode(WIFI_STA);
+              Serial.println("MQTT Connected! AP Disabled.");
+          }
           
           // Setup NTP (Only after MQTT is connected)
           const char* ntp1 = (strlen(config.ntp_server) > 0) ? config.ntp_server : "ntp.aliyun.com";

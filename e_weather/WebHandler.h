@@ -96,7 +96,12 @@ const char COMMON_CSS[] PROGMEM = R"css(
   
   .grid-2-col { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
   .grid-2-col input { margin: 0 !important; }
-  @media (max-width: 480px) { .grid-2-col { grid-template-columns: 1fr; } }
+  .grid-3-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .grid-3-col input { margin: 0 !important; }
+  @media (max-width: 480px) { 
+    .grid-2-col { grid-template-columns: 1fr; } 
+    .grid-3-col { grid-template-columns: 1fr; }
+  }
   
   a { color: var(--primary); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -124,7 +129,7 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
     <div style="text-align:center; margin-bottom:30px;">
       <h1>E-Paper Control</h1>
       <div style="display: flex; justify-content: center; gap: 15px; color: var(--text-light); font-size: 0.9rem;">
-        <span>Battery: <strong style="color: var(--primary);">%BATTERY_VOLTAGE%V</strong></span>
+        %BATTERY_INFO%
         <span>Build: <strong>%BUILD_DATE% %BUILD_TIME%</strong></span>
       </div>
     </div>
@@ -171,14 +176,24 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
         </div>
 
         <h3>ADC Settings (Battery)</h3>
-        <div class="grid-2-col">
+        <div class="grid-3-col">
             <div>
-                <label>ADC Pin (GPIO)</label>
-                <input type='number' name='adc_pin' value='%ADC_PIN%' placeholder="e.g. 34">
+                <label>ADC Pin</label>
+                <input type='number' name='adc_pin' value='%ADC_PIN%' placeholder="34">
             </div>
             <div>
                 <label>Divider Ratio</label>
-                <input type='number' name='adc_ratio' step="0.01" value='%ADC_RATIO%' placeholder="e.g. 2.0">
+                <input type='number' name='adc_ratio' step="0.01" value='%ADC_RATIO%' placeholder="2.0">
+            </div>
+            <div>
+                <label>Threshold (V)</label>
+                <input type='number' name='low_battery_threshold' step="0.1" value='%LOW_BATTERY_THRESHOLD%' placeholder="3.3">
+            </div>
+            <div style="grid-column: 1 / -1;">
+                <label style="display:flex;align-items:center;gap:8px;margin-top:5px;">
+                  <input type="checkbox" name="battery_mode" value="1" %BATTERY_MODE% style="width:auto;margin:0;">
+                  Battery Powered Mode (Enable startup voltage check)
+                </label>
             </div>
         </div>
 
@@ -245,7 +260,6 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
     </div>
 
     <div class="footer">
-      <p>Build: %BUILD_DATE% %BUILD_TIME%</p>
       <p>
         <a href='/files'>File Manager</a> &bull; 
         <a href='/update'>Firmware Update</a>
