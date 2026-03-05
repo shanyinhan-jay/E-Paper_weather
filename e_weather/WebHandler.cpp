@@ -10,7 +10,7 @@ void handleRoot() {
   
   // Replace placeholders manually since server.send() doesn't support template processor directly like ESPAsyncWebServer
   // A more efficient way would be to stream it, but for simplicity we replace strings
-  if (config.battery_mode) {
+  if (digitalRead(MODE_PIN) == HIGH) {
       String batHtml = "<span>Battery: <strong style='color: var(--primary);'>" + String(getBatteryVoltage(), 2) + "V</strong></span>";
       html.replace("%BATTERY_INFO%", batHtml);
   } else {
@@ -39,6 +39,8 @@ void handleRoot() {
   html.replace("%NTP_SERVER_2%", String(config.ntp_server_2));
   html.replace("%FULL_REFRESH%", String(config.full_refresh_period));
   html.replace("%REQUEST_INTERVAL%", String(config.request_interval));
+  html.replace("%SLEEP_DELAY%", String(config.sleep_delay));
+  html.replace("%CONFIG_TIMEOUT%", String(config.config_timeout));
   html.replace("%DAY_START%", String(config.day_start_hour));
   html.replace("%DAY_END%", String(config.day_end_hour));
   
@@ -61,7 +63,6 @@ void handleRoot() {
   html.replace("%ADC_PIN%", String(config.adc_pin));
   html.replace("%ADC_RATIO%", String(config.adc_ratio, 2));
   html.replace("%LOW_BATTERY_THRESHOLD%", String(config.low_battery_threshold, 2));
-  html.replace("%BATTERY_MODE%", config.battery_mode ? "checked" : "");
 
   if (config.invert_display) {
       html.replace("%INVERT_0%", "");
@@ -215,6 +216,8 @@ void handleSaveConfig() {
   if (server.hasArg("ntp_server_2")) strlcpy(config.ntp_server_2, server.arg("ntp_server_2").c_str(), sizeof(config.ntp_server_2));
   if (server.hasArg("full_refresh_period")) config.full_refresh_period = server.arg("full_refresh_period").toInt();
   if (server.hasArg("request_interval")) config.request_interval = server.arg("request_interval").toInt();
+  if (server.hasArg("sleep_delay")) config.sleep_delay = server.arg("sleep_delay").toInt();
+  if (server.hasArg("config_timeout")) config.config_timeout = server.arg("config_timeout").toInt();
   if (server.hasArg("day_start_hour")) config.day_start_hour = server.arg("day_start_hour").toInt();
   if (server.hasArg("day_end_hour")) config.day_end_hour = server.arg("day_end_hour").toInt();
   
@@ -223,7 +226,6 @@ void handleSaveConfig() {
   if (server.hasArg("adc_pin")) config.adc_pin = server.arg("adc_pin").toInt();
   if (server.hasArg("adc_ratio")) config.adc_ratio = server.arg("adc_ratio").toFloat();
   if (server.hasArg("low_battery_threshold")) config.low_battery_threshold = server.arg("low_battery_threshold").toFloat();
-  if (server.hasArg("battery_mode")) config.battery_mode = true; else config.battery_mode = false;
 
   // Static IP Handling
   if (server.hasArg("use_static_ip")) config.use_static_ip = true;

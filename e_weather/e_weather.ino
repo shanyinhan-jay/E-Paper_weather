@@ -7,6 +7,7 @@
 - DC : 27
 - BUSY : 25
 - ADC :34
+- BATTERY MODE : 4
 */
 // Serial2 Communication
 
@@ -118,6 +119,15 @@ const unsigned long UPDATE_DELAY_MS = 200; // Wait 200ms after last message to u
 
 Page currentPage = PAGE_WEATHER;
 bool switchPagePending = false;
+
+// Battery Mode & Deep Sleep Globals
+bool refreshDone = false;
+unsigned long lastRefreshTime = 0; // Timestamp of last display update
+bool configMode = false;
+unsigned long wakeTime = 0;
+
+// Forward declaration
+void enterDeepSleep();
 
 class Paint_GFX : public Adafruit_GFX {
 public:
@@ -249,7 +259,8 @@ void loadConfig() {
           config.adc_pin = doc["adc_pin"] | 34;
           config.adc_ratio = doc["adc_ratio"] | 2.0;
           config.low_battery_threshold = doc["low_battery_threshold"] | 3.3;
-          config.battery_mode = doc["battery_mode"] | false;
+          config.sleep_delay = doc["sleep_delay"] | 10;
+          config.config_timeout = doc["config_timeout"] | 5;
           
           config.use_static_ip = doc["use_static_ip"] | false;
           strlcpy(config.static_ip, doc["static_ip"] | "", sizeof(config.static_ip));
@@ -303,7 +314,8 @@ void saveConfig() {
   doc["adc_pin"] = config.adc_pin;
   doc["adc_ratio"] = config.adc_ratio;
   doc["low_battery_threshold"] = config.low_battery_threshold;
-  doc["battery_mode"] = config.battery_mode;
+  doc["sleep_delay"] = config.sleep_delay;
+  doc["config_timeout"] = config.config_timeout;
   
   doc["use_static_ip"] = config.use_static_ip;
   doc["static_ip"] = config.static_ip;
@@ -2102,12 +2114,8 @@ void handleButtonClick() {
 }
 
 void handleButtonDoubleClick() {
-    Serial.println("Double Click: Requesting Weather...");
-    if (client.connected()) {
-        client.publish("epd/weatherrequest", "get");
-    } else {
-        Serial.println("MQTT not connected, cannot send request");
-    }
+    Serial.println("Double Click: Manual sleep triggered");
+    enterDeepSleep();
 }
 
 void handleButtonLongPress() {
@@ -2131,12 +2139,40 @@ void setup() {
   printf("EPD_4IN2 WiFi Demo\r\n");
   DEV_Module_Init();             // 里面的 Serial.begin 重复调用无害
   
+  // LED Status Indicator
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH); // Turn on LED when awake
+
+  // Mode Pin Indicator (Pull-up)
+  pinMode(MODE_PIN, INPUT_PULLUP);
+  delay(100); // Wait for pin voltage to stabilize
+  
+  int modeState = digitalRead(MODE_PIN);
+  Serial.printf("Mode Pin (GPIO %d) State: %d (%s)\n", MODE_PIN, modeState, (modeState == HIGH) ? "HIGH" : "LOW");
+  
   // Load Config
   loadConfig();
   
+  // Check wakeup reason for Battery Mode
+  if (modeState == HIGH) {
+      esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+      if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+          Serial.println("Wakeup: Timer (Battery Mode). Auto-refresh and sleep.");
+          configMode = false;
+      } else {
+          // Button wakeup, power on, or serial wakeup
+          Serial.println("Wakeup: User/Power-on (Battery Mode). Staying awake for Web UI.");
+          configMode = true;
+          wakeTime = millis();
+      }
+  } else {
+      Serial.println("Mode: DC Powered. Staying awake.");
+      configMode = true; // Stay awake in DC mode
+  }
+  
   // Check for low battery at startup
   float currentVoltage = getBatteryVoltage();
-  if (config.battery_mode && currentVoltage > 0.1 && currentVoltage < config.low_battery_threshold) {
+  if (modeState == HIGH && currentVoltage > 0.1 && currentVoltage < config.low_battery_threshold) {
       Serial.printf("Low Battery Detected: %.2fV (Threshold: %.2fV)\n", currentVoltage, config.low_battery_threshold);
       String warnMsg = "LOW BATTERY WARNING!\nVoltage: " + String(currentVoltage, 2) + "V\nPlease charge the device.";
       displayMessage(warnMsg);
@@ -2191,6 +2227,8 @@ void setup() {
       
       if (WiFi.status() == WL_CONNECTED) {
           Serial.println("WiFi Connected!");
+          Serial.print("IP Address: ");
+          Serial.println(WiFi.localIP());
           // AP remains disabled unless WiFi fails or is not configured
       } else {
           Serial.println("WiFi Timeout. Enabling AP.");
@@ -2474,6 +2512,8 @@ void loop() {
           if (currentPage == PAGE_WEATHER) {
                Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
                displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
+               refreshDone = true; // Mark as refreshed for battery mode sleep
+               lastRefreshTime = millis(); // Set timestamp for sleep delay
           }
           updateWeatherPending = false;
           updateEnvPending = false;
@@ -2486,6 +2526,8 @@ void loop() {
           if (currentPage == PAGE_CALENDAR) {
                Serial.println("Triggering Deferred Calendar Update");
                displayCalendarPage(true);
+               refreshDone = true; // Mark as refreshed for battery mode sleep
+               lastRefreshTime = millis(); // Set timestamp for sleep delay
           }
           updateCalendarPending = false;
       }
@@ -2585,4 +2627,59 @@ void loop() {
       }
   }
   lastMinute = currentMinute;
+
+  // Battery Mode Deep Sleep Logic
+  if (digitalRead(MODE_PIN) == HIGH) {
+      // 1. If we are in Config Mode (stay awake for user defined mins)
+      if (configMode) {
+          if (millis() - wakeTime > (unsigned long)config.config_timeout * 60000) {
+              Serial.println("Config mode timeout. Entering sleep...");
+              enterDeepSleep();
+          }
+      } 
+      // 2. If we are NOT in config mode, sleep according to config after refresh is done
+      else {
+          // If at least one refresh has occurred and it's been the configured delay since last refresh
+          if (refreshDone && (millis() - lastRefreshTime > (unsigned long)config.sleep_delay * 1000)) {
+              Serial.println("Update cycle complete. Entering sleep...");
+              enterDeepSleep();
+          }
+          
+          // Failsafe: if we've been awake for more than 2 minutes without refresh, sleep anyway to save battery
+          if (millis() > 120000) { 
+              Serial.println("Failsafe: Awake too long without refresh. Sleeping...");
+              enterDeepSleep();
+          }
+      }
+  }
+}
+
+void enterDeepSleep() {
+    Serial.println("Entering Deep Sleep Mode...");
+    
+    // 0. Turn off Status LED
+    digitalWrite(LED_PIN, LOW);
+    
+    // 1. Disconnect Network
+    if (client.connected()) client.disconnect();
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    
+    // 2. Put EPD to sleep to save power
+    Local_EPD_4IN2_Sleep();
+    
+    // 3. Configure Wakeup Sources
+    // Ext0 Wakeup: BUTTON_PIN (GPIO 0), Active LOW
+    esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_PIN, 0); 
+    
+    // Timer Wakeup: From Config
+    if (config.request_interval > 0) {
+        uint64_t sleepTime = (uint64_t)config.request_interval * 60 * 1000000ULL;
+        esp_sleep_enable_timer_wakeup(sleepTime);
+        Serial.printf("Timer wakeup scheduled in %d minutes\n", config.request_interval);
+    }
+    
+    // 4. Start Sleep
+    delay(100);
+    esp_deep_sleep_start();
 }

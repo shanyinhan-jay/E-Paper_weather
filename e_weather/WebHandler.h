@@ -189,12 +189,6 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
                 <label>Threshold (V)</label>
                 <input type='number' name='low_battery_threshold' step="0.1" value='%LOW_BATTERY_THRESHOLD%' placeholder="3.3">
             </div>
-            <div style="grid-column: 1 / -1;">
-                <label style="display:flex;align-items:center;gap:8px;margin-top:5px;">
-                  <input type="checkbox" name="battery_mode" value="1" %BATTERY_MODE% style="width:auto;margin:0;">
-                  Battery Powered Mode (Enable startup voltage check)
-                </label>
-            </div>
         </div>
 
         <h3>WiFi</h3>
@@ -220,15 +214,23 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <input type='text' name='static_dns' value='%STATIC_DNS%' placeholder="DNS Server">
         </div>
         
-        <h3>Refresh Settings (Minutes)</h3>
+        <h3>Refresh & Sleep Settings</h3>
         <div class="grid-2-col">
             <div>
-                <label>Full Refresh Period</label>
+                <label>Full Refresh (min)</label>
                 <input type='number' name='full_refresh_period' value='%FULL_REFRESH%' placeholder="0 = Disabled">
             </div>
             <div>
-                <label>Request Interval</label>
+                <label>Request (min)</label>
                 <input type='number' name='request_interval' value='%REQUEST_INTERVAL%' placeholder="0 = Disabled">
+            </div>
+            <div>
+                <label>Sleep Delay (sec)</label>
+                <input type='number' name='sleep_delay' value='%SLEEP_DELAY%' placeholder="Default 10s">
+            </div>
+            <div>
+                <label>Manual Wakeup Delay (min)</label>
+                <input type='number' name='config_timeout' value='%CONFIG_TIMEOUT%' placeholder="Default 5m">
             </div>
         </div>
 

@@ -52,6 +52,8 @@
     #define EPD_DC_PIN   27
     #define EPD_BUSY_PIN 25
     #define BUTTON_PIN   0
+    #define LED_PIN      2
+    #define MODE_PIN     4  // High = Battery Mode, Low = DC Mode
 
 
 #define GPIO_PIN_SET   1

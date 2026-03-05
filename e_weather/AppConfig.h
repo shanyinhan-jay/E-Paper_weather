@@ -30,7 +30,8 @@ struct Config {
   int adc_pin = 34; // Default ADC pin for battery monitoring
   float adc_ratio = 2.0; // Voltage divider ratio (e.g., 2.0 for 100k/100k)
   float low_battery_threshold = 3.3; // Low battery warning threshold in Volts
-  bool battery_mode = false;
+  int sleep_delay = 10; // Seconds to stay awake after refresh in battery mode
+  int config_timeout = 5; // Minutes to stay awake in Config Mode (after manual wakeup)
   
   // Static IP Configuration
   bool use_static_ip = false;
