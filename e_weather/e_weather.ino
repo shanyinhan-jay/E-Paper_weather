@@ -2655,21 +2655,32 @@ void loop() {
 }
 
 void enterDeepSleep() {
-    Serial.println("Entering Deep Sleep Mode...");
+    Serial.println("Entering Deep Sleep Mode (Extreme Savings)...");
     
-    // 0. Turn off Status LED
-    digitalWrite(LED_PIN, LOW);
+    // 0. Disable all possible peripherals to prevent leakage
+    // Set most pins to INPUT to isolate them
+    pinMode(LED_PIN, INPUT);
+    pinMode(EPD_SCK_PIN, INPUT);
+    pinMode(EPD_MOSI_PIN, INPUT);
+    pinMode(EPD_CS_PIN, INPUT);
+    pinMode(EPD_RST_PIN, INPUT);
+    pinMode(EPD_DC_PIN, INPUT);
+    pinMode(EPD_BUSY_PIN, INPUT);
+    pinMode(MODE_PIN, INPUT);
+    if (config.adc_pin >= 0) pinMode(config.adc_pin, INPUT);
     
-    // 1. Disconnect Network
+    // 1. Shut down Radio and Wireless
     if (client.connected()) client.disconnect();
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
+    btStop(); // Stop Bluetooth explicitly
     
-    // 2. Put EPD to sleep to save power
+    // 2. Put EPD to deep sleep mode via its controller
     Local_EPD_4IN2_Sleep();
     
     // 3. Configure Wakeup Sources
     // Ext0 Wakeup: BUTTON_PIN (GPIO 0), Active LOW
+    // The ESP32 RTC domain will handle the pull-up internally if configured
     esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_PIN, 0); 
     
     // Timer Wakeup: From Config
@@ -2679,7 +2690,14 @@ void enterDeepSleep() {
         Serial.printf("Timer wakeup scheduled in %d minutes\n", config.request_interval);
     }
     
-    // 4. Start Sleep
+    // 4. Final power domain optimizations
+    // Optional: Turn off more power domains if not using RTC memory
+    // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
+    // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
+    // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
+
+    // 5. Start Sleep
+    Serial.flush();
     delay(100);
     esp_deep_sleep_start();
 }

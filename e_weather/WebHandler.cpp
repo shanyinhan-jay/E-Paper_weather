@@ -238,9 +238,7 @@ void handleSaveConfig() {
 
   saveConfig();
   
-  server.send(200, "text/html", "<html><body><h1>Configuration Saved</h1><p>Device is restarting...</p><a href='/'>Back</a></body></html>");
-  delay(1000);
-  ESP.restart();
+  server.send(200, "text/html", "<html><body><h1>Configuration Saved</h1><p>Settings have been saved to memory. Some changes may require a manual reboot.</p><a href='/'>Back</a></body></html>");
 }
 
 void handleSetPage() {

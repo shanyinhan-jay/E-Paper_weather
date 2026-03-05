@@ -250,7 +250,7 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <input type='number' name='day_end_hour' value='%DAY_END%' min="0" max="23" placeholder="Night Start (Default 18)">
         </div>
 
-        <input type='submit' value='Save & Restart' style="margin-top: 20px;">
+        <input type='submit' value='Save Configuration' style="margin-top: 20px;">
       </form>
     </div>
 
