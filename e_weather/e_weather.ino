@@ -459,8 +459,7 @@ void displayMessage(String text) {
 
         Serial.println("Displaying");
         Local_EPD_4IN2_Display(BlackImage);
-        Serial.println("Sleeping");
-        Local_EPD_4IN2_Sleep();
+        hibernateEPD();
         // free(BlackImage); // Keep allocated to prevent fragmentation
         // BlackImage = NULL;
         Serial.println("displayMessage done");
@@ -660,7 +659,7 @@ void displayCalendarPage(bool partial_update = false) {
             Local_EPD_4IN2_Init();
             Local_EPD_4IN2_Display(BlackImage);
         }
-        Local_EPD_4IN2_Sleep();
+        hibernateEPD();
         
         // free(BlackImage); // Keep allocated
         // BlackImage = NULL;
@@ -1406,18 +1405,34 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             Local_EPD_4IN2_Init();
             Local_EPD_4IN2_Display(BlackImage);
         }
-        Local_EPD_4IN2_Sleep();
+        hibernateEPD();
         
         // Signal completion via Serial2 ONLY if requested (weather MQTT updates)
         if (sendSignal) {
             Serial2.println("bye");
-            Serial.println("Sent 'bye' via Serial2 after weather update refresh");
+            digitalWrite(BYE_SIGNAL_PIN, LOW); // Trigger low level signal
+            Serial.println("Sent 'bye' via Serial2 and BYE_SIGNAL_PIN set to LOW");
         }
         
         // free(BlackImage); // Keep allocated
         // BlackImage = NULL;
 
     }
+}
+
+void hibernateEPD() {
+    Serial.println("Hibernating EPD...");
+    // 1. Put EPD to deep sleep mode via its controller
+    Local_EPD_4IN2_Sleep();
+    
+    // 2. Disable all possible EPD pins to prevent leakage
+    pinMode(EPD_SCK_PIN, INPUT);
+    pinMode(EPD_MOSI_PIN, INPUT);
+    pinMode(EPD_CS_PIN, INPUT);
+    pinMode(EPD_RST_PIN, INPUT);
+    pinMode(EPD_DC_PIN, INPUT);
+    pinMode(EPD_BUSY_PIN, INPUT);
+    Serial.println("EPD pins isolated.");
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -2143,6 +2158,10 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH); // Turn on LED when awake
 
+  // Bye Signal Pin
+  pinMode(BYE_SIGNAL_PIN, OUTPUT);
+  digitalWrite(BYE_SIGNAL_PIN, HIGH); // Default HIGH
+
   // Mode Pin Indicator (Pull-up)
   pinMode(MODE_PIN, INPUT_PULLUP);
   delay(100); // Wait for pin voltage to stabilize
@@ -2657,16 +2676,10 @@ void loop() {
 void enterDeepSleep() {
     Serial.println("Entering Deep Sleep Mode (Extreme Savings)...");
     
-    // 0. Disable all possible peripherals to prevent leakage
-    // Set most pins to INPUT to isolate them
+    // 0. Disable remaining peripherals to prevent leakage
     pinMode(LED_PIN, INPUT);
-    pinMode(EPD_SCK_PIN, INPUT);
-    pinMode(EPD_MOSI_PIN, INPUT);
-    pinMode(EPD_CS_PIN, INPUT);
-    pinMode(EPD_RST_PIN, INPUT);
-    pinMode(EPD_DC_PIN, INPUT);
-    pinMode(EPD_BUSY_PIN, INPUT);
     pinMode(MODE_PIN, INPUT);
+    pinMode(BYE_SIGNAL_PIN, INPUT);
     if (config.adc_pin >= 0) pinMode(config.adc_pin, INPUT);
     
     // 1. Shut down Radio and Wireless
@@ -2675,8 +2688,8 @@ void enterDeepSleep() {
     WiFi.mode(WIFI_OFF);
     btStop(); // Stop Bluetooth explicitly
     
-    // 2. Put EPD to deep sleep mode via its controller
-    Local_EPD_4IN2_Sleep();
+    // 2. Put EPD to deep sleep and isolate its pins
+    hibernateEPD();
     
     // 3. Configure Wakeup Sources
     // Ext0 Wakeup: BUTTON_PIN (GPIO 0), Active LOW

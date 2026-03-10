@@ -54,6 +54,7 @@
     #define BUTTON_PIN   0
     #define LED_PIN      2
     #define MODE_PIN     4  // High = Battery Mode, Low = DC Mode
+    #define BYE_SIGNAL_PIN 18 // Low when task finished
 
 
 #define GPIO_PIN_SET   1

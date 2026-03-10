@@ -379,7 +379,7 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
 
         <div class="btn-group" style="display: flex; gap: 10px;">
             <button type="button" onclick="window.location.href='/'" style="background:#6b7280; flex:1; padding:12px; font-size:16px;">Cancel</button>
-            <button type="submit" style="background:#2563eb; flex:1; padding:12px; font-size:16px;">Save & Restart</button>
+            <button type="submit" style="background:#2563eb; flex:1; padding:12px; font-size:16px;">Save Config</button>
         </div>
       </form>
     </div>
