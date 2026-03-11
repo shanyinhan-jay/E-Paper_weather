@@ -2709,8 +2709,21 @@ void enterDeepSleep() {
     // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
     // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
 
-    // 5. Start Sleep
+    // 5. Isolate UART pins to prevent backflow to CH340 or other devices
+    Serial.println("Final UART shutdown...");
     Serial.flush();
+    Serial2.flush();
+    delay(10);
+    
+    Serial.end();
+    Serial2.end();
+    
+    pinMode(1, INPUT);  // Main TX
+    pinMode(3, INPUT);  // Main RX
+    pinMode(16, INPUT); // Serial2 TX
+    pinMode(17, INPUT); // Serial2 RX
+
+    // 6. Start Sleep
     delay(100);
     esp_deep_sleep_start();
 }
