@@ -9,7 +9,6 @@
 - ADC :34
 - BATTERY MODE : 4
 - LED_PIN      2
-- MODE_PIN     4  // High = Battery Mode, Low = DC Mode
 - BYE_SIGNAL_PIN 18 // Low when task finished
 */
 // Serial2 Communication
