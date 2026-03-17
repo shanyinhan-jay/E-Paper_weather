@@ -1412,8 +1412,14 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         // Signal completion via Serial2 ONLY if requested (weather MQTT updates)
         if (sendSignal) {
             Serial2.println("bye");
-            digitalWrite(BYE_SIGNAL_PIN, LOW); // Trigger low level signal
-            Serial.println("Sent 'bye' via Serial2 and BYE_SIGNAL_PIN set to LOW");
+            
+            // Check Lock Pin (LOW = Block Signal)
+            if (digitalRead(BYE_LOCK_PIN) == HIGH) {
+                digitalWrite(BYE_SIGNAL_PIN, LOW); // Trigger low level signal
+                Serial.println("Sent 'bye' via Serial2 and BYE_SIGNAL_PIN set to LOW");
+            } else {
+                Serial.println("BYE Signal Blocked by BYE_LOCK_PIN (GPIO 19 is LOW)");
+            }
         }
         
         // free(BlackImage); // Keep allocated
@@ -2164,6 +2170,9 @@ void setup() {
   pinMode(BYE_SIGNAL_PIN, OUTPUT);
   digitalWrite(BYE_SIGNAL_PIN, HIGH); // Default HIGH
 
+  // Bye Lock Pin (LOW = Disable BYE Signal)
+  pinMode(BYE_LOCK_PIN, INPUT_PULLUP);
+
   // Mode Pin Indicator (Pull-up)
   pinMode(MODE_PIN, INPUT_PULLUP);
   delay(100); // Wait for pin voltage to stabilize
@@ -2682,6 +2691,7 @@ void enterDeepSleep() {
     pinMode(LED_PIN, INPUT);
     pinMode(MODE_PIN, INPUT);
     pinMode(BYE_SIGNAL_PIN, INPUT);
+    pinMode(BYE_LOCK_PIN, INPUT);
     if (config.adc_pin >= 0) pinMode(config.adc_pin, INPUT);
     
     // 1. Shut down Radio and Wireless
