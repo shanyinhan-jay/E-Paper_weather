@@ -237,6 +237,7 @@ void loadConfig() {
         if (!error) {
           strlcpy(config.wifi_ssid, doc["wifi_ssid"] | "", sizeof(config.wifi_ssid));
           strlcpy(config.wifi_pass, doc["wifi_pass"] | "", sizeof(config.wifi_pass));
+          strlcpy(config.device_name, doc["device_name"] | "EPD-Display", sizeof(config.device_name));
           strlcpy(config.mqtt_server, doc["mqtt_server"] | "", sizeof(config.mqtt_server));
           config.mqtt_port = doc["mqtt_port"] | 1883;
           strlcpy(config.mqtt_user, doc["mqtt_user"] | "", sizeof(config.mqtt_user));
@@ -248,6 +249,7 @@ void loadConfig() {
           strlcpy(config.mqtt_calendar_topic, doc["mqtt_calendar_topic"] | "epd/calendar", sizeof(config.mqtt_calendar_topic));
           strlcpy(config.mqtt_shift_topic, doc["mqtt_shift_topic"] | "epd/shift", sizeof(config.mqtt_shift_topic));
           strlcpy(config.mqtt_air_quality_topic, doc["mqtt_air_quality_topic"] | "epd/air_quality", sizeof(config.mqtt_air_quality_topic));
+          strlcpy(config.mqtt_battery_topic, doc["mqtt_battery_topic"] | "shanyinhan/epd/battery", sizeof(config.mqtt_battery_topic));
           strlcpy(config.mqtt_unified_topic, doc["mqtt_unified_topic"] | "epd/unified", sizeof(config.mqtt_unified_topic));
           strlcpy(config.mqtt_request_topic, doc["mqtt_request_topic"] | "epd/weatherrequest", sizeof(config.mqtt_request_topic));
           strlcpy(config.ntp_server, doc["ntp_server"] | "ntp1.aliyun.com", sizeof(config.ntp_server));
@@ -292,6 +294,7 @@ void saveConfig() {
   JsonDocument doc;
   doc["wifi_ssid"] = config.wifi_ssid;
   doc["wifi_pass"] = config.wifi_pass;
+  doc["device_name"] = config.device_name;
   doc["mqtt_server"] = config.mqtt_server;
   doc["mqtt_port"] = config.mqtt_port;
   doc["mqtt_user"] = config.mqtt_user;
@@ -303,6 +306,7 @@ void saveConfig() {
   doc["mqtt_calendar_topic"] = config.mqtt_calendar_topic;
   doc["mqtt_shift_topic"] = config.mqtt_shift_topic;
   doc["mqtt_air_quality_topic"] = config.mqtt_air_quality_topic;
+  doc["mqtt_battery_topic"] = config.mqtt_battery_topic;
   doc["mqtt_unified_topic"] = config.mqtt_unified_topic;
   doc["mqtt_request_topic"] = config.mqtt_request_topic;
   doc["ntp_server"] = config.ntp_server;
@@ -349,6 +353,31 @@ float getBatteryVoltage() {
     // Voltage = ADC * (3.3 / 4095.0) * ratio
     float voltage = avgAdc * (3.3 / 4095.0) * config.adc_ratio;
     return voltage;
+}
+
+void publishBatteryVoltage() {
+    Serial.printf("Attempting to publish battery voltage to: %s\n", config.mqtt_battery_topic);
+    if (strlen(config.mqtt_battery_topic) > 0) {
+        if (client.connected()) {
+            float voltage = getBatteryVoltage();
+            Serial.printf("Measured voltage: %.2fV\n", voltage);
+            if (voltage > 0.1) {
+                char payload[10];
+                dtostrf(voltage, 4, 2, payload);
+                if (client.publish(config.mqtt_battery_topic, payload, true)) { // Added retain flag
+                    Serial.printf("Battery voltage published: %sV to %s\n", payload, config.mqtt_battery_topic);
+                } else {
+                    Serial.println("Failed to publish battery voltage (MQTT Error)");
+                }
+            } else {
+                Serial.println("Voltage too low to publish");
+            }
+        } else {
+            Serial.println("Cannot publish: MQTT Client NOT connected");
+        }
+    } else {
+        Serial.println("Cannot publish: mqtt_battery_topic is empty");
+    }
 }
 
 void displayMessage(String text) {
@@ -2274,12 +2303,12 @@ void setup() {
       // Append MAC suffix to AP SSID using raw bytes for reliability
       uint8_t mac[6];
       WiFi.macAddress(mac);
-      Serial.printf("Raw MAC: %02X:%02X:%02X:%02X:%02X:%02X\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
       
       char macSuffix[5];
       sprintf(macSuffix, "%02X%02X", mac[4], mac[5]);
       
-      ap_ssid = String(DEFAULT_AP_SSID_BASE) + "-" + String(macSuffix);
+      const char* baseSSID = (strlen(config.device_name) > 0) ? config.device_name : DEFAULT_AP_SSID_BASE;
+      ap_ssid = String(baseSSID) + "-" + String(macSuffix);
       
       WiFi.softAP(ap_ssid.c_str());
       Serial.println("AP Started: " + ap_ssid);
@@ -2382,6 +2411,9 @@ void setup() {
           } else {
               Serial.println("Weather Request failed (Setup)");
           }
+
+          // Initial battery status publish (moved to after connect & sub)
+          publishBatteryVoltage();
       } else {
           Serial.print("MQTT Connect failed, rc=");
           Serial.println(client.state());
@@ -2417,7 +2449,14 @@ void setup() {
   printf("HTTP server started\r\n");
 
   // Setup OTA
-  ArduinoOTA.setHostname("EPD-4in2-Demo");
+  const char* hostName = (strlen(config.device_name) > 0) ? config.device_name : "EPD-Display";
+  ArduinoOTA.setHostname(hostName);
+  
+  if (MDNS.begin(hostName)) {
+      Serial.printf("mDNS responder started: http://%s.local\n", hostName);
+      MDNS.addService("http", "tcp", 80);
+  }
+
   ArduinoOTA.onStart([]() {
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH)
@@ -2629,8 +2668,9 @@ void loop() {
    if (config.request_interval > 0 && client.connected()) {
        if (millis() - lastRequestTime > (unsigned long)config.request_interval * 60 * 1000) { // Convert minutes to ms
            lastRequestTime = millis();
-           Serial.println("Sending Periodic Weather Request");
+           Serial.println("Sending Periodic Weather Request & Battery Update");
            client.publish(config.mqtt_request_topic, "get");
+           publishBatteryVoltage();
        }
    }
   

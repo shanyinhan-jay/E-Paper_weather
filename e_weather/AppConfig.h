@@ -4,6 +4,7 @@
 struct Config {
   char wifi_ssid[32] = "Linksys-2.4G-wifi5";
   char wifi_pass[32] = "19811201";
+  char device_name[32] = "EPD-Display";
   char mqtt_server[64] = "broker.emqx.io";
   int  mqtt_port = 1883;
   char mqtt_user[32] = "";
@@ -15,6 +16,7 @@ struct Config {
   char mqtt_calendar_topic[64] = "shanyinhan/epd/calendar";
   char mqtt_shift_topic[64] = "shanyinhan/epd/shift";
   char mqtt_air_quality_topic[64] = "shanyinhan/epd/air_quality";
+  char mqtt_battery_topic[64] = "shanyinhan/epd/battery";
   char mqtt_unified_topic[64] = "shanyinhan/epd/unified"; // New unified topic
   char mqtt_request_topic[64] = "shanyinhan/epd/weatherrequest"; // New request topic
   char ntp_server[64] = "ntp.aliyun.com";

@@ -22,12 +22,14 @@ void handleRoot() {
   html.replace("%CSS%", COMMON_CSS);
   html.replace("%WIFI_SSID%", String(config.wifi_ssid));
   html.replace("%WIFI_PASS%", String(config.wifi_pass));
+  html.replace("%DEVICE_NAME%", String(config.device_name));
   html.replace("%MQTT_SERVER%", String(config.mqtt_server));
   html.replace("%MQTT_PORT%", String(config.mqtt_port));
   html.replace("%MQTT_USER%", String(config.mqtt_user));
   html.replace("%MQTT_PASS%", String(config.mqtt_pass));
   html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
   html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
+  html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
   html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
   html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
   html.replace("%MQTT_CALENDAR%", String(config.mqtt_calendar_topic));
@@ -81,6 +83,7 @@ void handleMqttConfig() {
   
   html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
   html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
+  html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
   html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
   html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
   html.replace("%MQTT_CALENDAR%", String(config.mqtt_calendar_topic));
@@ -199,6 +202,7 @@ void handleReboot() {
 void handleSaveConfig() {
   if (server.hasArg("wifi_ssid")) strlcpy(config.wifi_ssid, server.arg("wifi_ssid").c_str(), sizeof(config.wifi_ssid));
   if (server.hasArg("wifi_pass")) strlcpy(config.wifi_pass, server.arg("wifi_pass").c_str(), sizeof(config.wifi_pass));
+  if (server.hasArg("device_name")) strlcpy(config.device_name, server.arg("device_name").c_str(), sizeof(config.device_name));
   if (server.hasArg("mqtt_server")) strlcpy(config.mqtt_server, server.arg("mqtt_server").c_str(), sizeof(config.mqtt_server));
   if (server.hasArg("mqtt_port")) config.mqtt_port = server.arg("mqtt_port").toInt();
   if (server.hasArg("mqtt_user")) strlcpy(config.mqtt_user, server.arg("mqtt_user").c_str(), sizeof(config.mqtt_user));
@@ -210,6 +214,7 @@ void handleSaveConfig() {
   if (server.hasArg("mqtt_calendar_topic")) strlcpy(config.mqtt_calendar_topic, server.arg("mqtt_calendar_topic").c_str(), sizeof(config.mqtt_calendar_topic));
   if (server.hasArg("mqtt_shift_topic")) strlcpy(config.mqtt_shift_topic, server.arg("mqtt_shift_topic").c_str(), sizeof(config.mqtt_shift_topic));
   if (server.hasArg("mqtt_air_quality_topic")) strlcpy(config.mqtt_air_quality_topic, server.arg("mqtt_air_quality_topic").c_str(), sizeof(config.mqtt_air_quality_topic));
+  if (server.hasArg("mqtt_battery_topic")) strlcpy(config.mqtt_battery_topic, server.arg("mqtt_battery_topic").c_str(), sizeof(config.mqtt_battery_topic));
   if (server.hasArg("mqtt_unified_topic")) strlcpy(config.mqtt_unified_topic, server.arg("mqtt_unified_topic").c_str(), sizeof(config.mqtt_unified_topic));
   if (server.hasArg("mqtt_request_topic")) strlcpy(config.mqtt_request_topic, server.arg("mqtt_request_topic").c_str(), sizeof(config.mqtt_request_topic));
   if (server.hasArg("ntp_server")) strlcpy(config.ntp_server, server.arg("ntp_server").c_str(), sizeof(config.ntp_server));
@@ -238,7 +243,7 @@ void handleSaveConfig() {
 
   saveConfig();
   
-  server.send(200, "text/html", "<html><body><h1>Configuration Saved</h1><p>Settings have been saved to memory. Some changes may require a manual reboot.</p><a href='/'>Back</a></body></html>");
+  server.send(200, "text/plain", "OK");
 }
 
 void handleSetPage() {

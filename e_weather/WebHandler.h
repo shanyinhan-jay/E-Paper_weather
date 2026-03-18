@@ -112,6 +112,43 @@ const char COMMON_CSS[] PROGMEM = R"css(
   li:last-child { border-bottom: none; }
   .badge { background: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
 </style>
+<script>
+  async function submitConfig(e, form) {
+    if (e) e.preventDefault(); // Correct way to prevent default form submission
+    
+    const formData = new FormData(form);
+    const submitBtn = form.querySelector('input[type="submit"], button[type="submit"]');
+    const originalBtnText = submitBtn ? (submitBtn.value || submitBtn.innerText) : 'Save';
+    
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      if (submitBtn.tagName === 'INPUT') submitBtn.value = 'Saving...';
+      else submitBtn.innerText = 'Saving...';
+    }
+    
+    try {
+      const response = await fetch(form.action, {
+        method: 'POST',
+        body: formData
+      });
+      
+      if (response.ok) {
+        alert('Configuration saved successfully!');
+      } else {
+        alert('Failed to save configuration. Status: ' + response.status);
+      }
+    } catch (error) {
+      alert('Error: ' + error.message);
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        if (submitBtn.tagName === 'INPUT') submitBtn.value = originalBtnText;
+        else submitBtn.innerText = originalBtnText;
+      }
+    }
+    return false;
+  }
+</script>
 )css";
 
 // HTML Templates
@@ -155,7 +192,7 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
     
     <div class="card">
       <h2>Configuration</h2>
-      <form action='/saveConfig' method='POST'>
+      <form action='/saveConfig' method='POST' onsubmit='return submitConfig(event, this);'>
         <h3>Display Mode</h3>
         <div class="grid-2-col">
             <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
@@ -191,10 +228,14 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
-        <h3>WiFi</h3>
+        <h3>WiFi & Device</h3>
         <div class="grid-2-col">
             <input type='text' name='wifi_ssid' value='%WIFI_SSID%' placeholder="SSID">
             <input type='password' name='wifi_pass' value='%WIFI_PASS%' placeholder="Password">
+        </div>
+        <div>
+            <label>Device Name (for AP & mDNS)</label>
+            <input type='text' name='device_name' value='%DEVICE_NAME%' placeholder="EPD-Display">
         </div>
 
         <h3>NTP Servers</h3>
@@ -348,10 +389,13 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
   <div class="container">
     <div class="card">
       <h2>MQTT Topics Configuration</h2>
-      <form action='/saveConfig' method='POST'>
+      <form action='/saveConfig' method='POST' onsubmit='return submitConfig(event, this);'>
         
         <h3>Unified Topic</h3>
         <input type='text' name='mqtt_unified_topic' value='%MQTT_UNIFIED%' placeholder="epd/unified">
+
+        <h3>Battery Voltage Topic</h3>
+        <input type='text' name='mqtt_battery_topic' value='%MQTT_BATTERY%' placeholder="epd/battery">
 
         <h3>Weather Topic</h3>
         <input type='text' name='mqtt_weather_topic' value='%MQTT_WEATHER%' placeholder="epd/weather">
