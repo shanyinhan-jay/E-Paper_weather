@@ -10,7 +10,8 @@
 - BATTERY MODE : 4
 - LED_PIN      2
 - BYE_SIGNAL_PIN 18 // Low when task finished
-*/
+- BYE_LOCK_PIN 19 
+·*/
 // Serial2 Communication
 
 
@@ -2288,6 +2289,15 @@ void setup() {
           Serial.println("WiFi Connected!");
           Serial.print("IP Address: ");
           Serial.println(WiFi.localIP());
+          
+          // Display IP and Gateway info in DC mode at startup
+          if (modeState == LOW) {
+              String networkInfo = "WiFi Connected!\n";
+              networkInfo += "IP: " + WiFi.localIP().toString() + "\n";
+              networkInfo += "GW: " + WiFi.gatewayIP().toString();
+              displayMessage(networkInfo);
+              delay(2000); // Give user some time to see the info
+          }
           // AP remains disabled unless WiFi fails or is not configured
       } else {
           Serial.println("WiFi Timeout. Enabling AP.");
