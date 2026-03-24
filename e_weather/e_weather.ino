@@ -7,10 +7,10 @@
 - DC : 27
 - BUSY : 25
 - ADC :34
-- BATTERY MODE : 4
-- LED_PIN      2
-- BYE_SIGNAL_PIN 18 // Low when task finished
-- BYE_LOCK_PIN 19 
+- MODE_PIN : 19 // HIGH = Battery, LOW = DC
+- LED_PIN : 2
+- BYE_SIGNAL_PIN : 18 // Low when task finished (Battery Mode only)
+- UNUSED : 4
 ·*/
 // Serial2 Communication
 
@@ -1443,12 +1443,13 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         if (sendSignal) {
             Serial2.println("bye");
             
-            // Check Lock Pin (LOW = Block Signal)
-            if (digitalRead(BYE_LOCK_PIN) == HIGH) {
+            // Check Mode (Battery Mode = HIGH, DC Mode = LOW)
+            // Completion signal is ONLY sent in Battery Mode to trigger power-off/sleep circuitry
+            if (digitalRead(MODE_PIN) == HIGH) {
                 digitalWrite(BYE_SIGNAL_PIN, LOW); // Trigger low level signal
-                Serial.println("Sent 'bye' via Serial2 and BYE_SIGNAL_PIN set to LOW");
+                Serial.println("Sent 'bye' via Serial2 and BYE_SIGNAL_PIN set to LOW (Battery Mode)");
             } else {
-                Serial.println("BYE Signal Blocked by BYE_LOCK_PIN (GPIO 19 is LOW)");
+                Serial.println("BYE Signal Blocked (DC Mode)");
             }
         }
         
@@ -2200,11 +2201,8 @@ void setup() {
   pinMode(BYE_SIGNAL_PIN, OUTPUT);
   digitalWrite(BYE_SIGNAL_PIN, HIGH); // Default HIGH
 
-  // Bye Lock Pin (LOW = Disable BYE Signal)
-  pinMode(BYE_LOCK_PIN, INPUT_PULLUP);
-
-  // Mode Pin Indicator (Pull-up)
-  pinMode(MODE_PIN, INPUT_PULLUP);
+  // Mode Pin Indicator (Input-only on GPIO 35)
+  pinMode(MODE_PIN, INPUT);
   delay(100); // Wait for pin voltage to stabilize
   
   int modeState = digitalRead(MODE_PIN);
@@ -2741,7 +2739,6 @@ void enterDeepSleep() {
     pinMode(LED_PIN, INPUT);
     pinMode(MODE_PIN, INPUT);
     pinMode(BYE_SIGNAL_PIN, INPUT);
-    pinMode(BYE_LOCK_PIN, INPUT);
     if (config.adc_pin >= 0) pinMode(config.adc_pin, INPUT);
     
     // 1. Shut down Radio and Wireless

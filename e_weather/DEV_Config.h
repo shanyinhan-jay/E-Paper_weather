@@ -53,9 +53,9 @@
     #define EPD_BUSY_PIN 25
     #define BUTTON_PIN   0
     #define LED_PIN      2
-    #define MODE_PIN     4  // High = Battery Mode, Low = DC Mode
+    #define UNUSED_PIN   4  // Was MODE_PIN
     #define BYE_SIGNAL_PIN 18 // Low when task finished
-    #define BYE_LOCK_PIN 19 // LOW means do not pull BYE_SIGNAL_PIN low
+    #define MODE_PIN     19 // High = Battery Mode, Low = DC Mode (Input-only, external pull-up/down required)
 
 
 #define GPIO_PIN_SET   1
