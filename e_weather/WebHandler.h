@@ -15,6 +15,7 @@ extern void saveConfig();
 extern void handleMqttConfig();
 extern float getBatteryVoltage();
 extern void displayMessage(String text);
+extern void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight);
 extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
 extern void displayCalendarPage(bool partial_update);
 extern bool switchPagePending;

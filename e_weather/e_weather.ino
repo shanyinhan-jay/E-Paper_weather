@@ -7,6 +7,7 @@
 - DC : 27
 - BUSY : 25
 - ADC :34
+- ADC_SWITCH_EN_PIN : 5 // HIGH = enable TPS22860 for battery sensing
 - MODE_PIN : 19 // HIGH = Battery, LOW = DC
 - LED_PIN : 2
 - BYE_SIGNAL_PIN : 18 // Low when task finished (Battery Mode only)
@@ -29,7 +30,9 @@
 #include <PubSubClient.h>
 #include <NTPClient.h>
 #include <WiFiUdp.h>
-#include "icons.h"
+#include "icon/icon_m.h"
+#include "icon/icon_s.h"
+#include "icon/icon_o.h"
 #include "AppConfig.h"
 #include "WebHandler.h"
 
@@ -131,6 +134,10 @@ unsigned long wakeTime = 0;
 
 // Forward declaration
 void enterDeepSleep();
+
+static void setAdcMeasurementPower(bool enabled) {
+    digitalWrite(ADC_SWITCH_EN_PIN, enabled ? HIGH : LOW);
+}
 
 class Paint_GFX : public Adafruit_GFX {
 public:
@@ -342,6 +349,9 @@ float getBatteryVoltage() {
     if (config.adc_pin < 0) return 0.0;
     
     Serial.println("getBatteryVoltage called");
+    setAdcMeasurementPower(true);
+    delay(20); // Allow TPS22860 and divider output to settle before sampling.
+
     // Smooth reading with multiple samples
     uint32_t sum = 0;
     for (int i = 0; i < 10; i++) {
@@ -353,6 +363,7 @@ float getBatteryVoltage() {
     // 12-bit ADC (0-4095) with 3.3V reference
     // Voltage = ADC * (3.3 / 4095.0) * ratio
     float voltage = avgAdc * (3.3 / 4095.0) * config.adc_ratio;
+    setAdcMeasurementPower(false);
     return voltage;
 }
 
@@ -381,7 +392,7 @@ void publishBatteryVoltage() {
     }
 }
 
-void displayMessage(String text) {
+void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight) {
     Serial.println("displayMessage start");
     Serial.printf("Free Heap: %u\n", ESP.getFreeHeap());
     
@@ -423,6 +434,7 @@ void displayMessage(String text) {
         Serial.println("Processing Text");
         // --- 1. Wrap Text into Lines ---
         std::vector<String> lines;
+        std::vector<String> bitmapCaptionLines;
         String currentLine = "";
         int len = text.length();
         int i = 0;
@@ -464,14 +476,52 @@ void displayMessage(String text) {
         if (currentLine.length() > 0) {
             lines.push_back(currentLine);
         }
+
+        if (bitmap != nullptr && bitmapWidth > 0 && bitmapHeight > 0) {
+            String bitmapCaption = "Scan the QR code for assistance.";
+            String captionLine = "";
+            int captionLen = bitmapCaption.length();
+            int captionIndex = 0;
+
+            while (captionIndex < captionLen) {
+                int charLen = 1;
+                unsigned char c = bitmapCaption[captionIndex];
+                if (c >= 0xF0) charLen = 4;
+                else if (c >= 0xE0) charLen = 3;
+                else if (c >= 0xC0) charLen = 2;
+
+                if (captionIndex + charLen > captionLen) {
+                    break;
+                }
+
+                String nextChar = bitmapCaption.substring(captionIndex, captionIndex + charLen);
+                if (u8g2.getUTF8Width((captionLine + nextChar).c_str()) > (logicalWidth - 10)) {
+                    bitmapCaptionLines.push_back(captionLine);
+                    captionLine = nextChar;
+                } else {
+                    captionLine += nextChar;
+                }
+                captionIndex += charLen;
+            }
+
+            if (captionLine.length() > 0) {
+                bitmapCaptionLines.push_back(captionLine);
+            }
+        }
         
         Serial.println("Calculating Layout");
         // --- 2. Calculate Centering ---
         int lineHeight = 20; // Fixed line height for safety
-        int totalHeight = lines.size() * lineHeight;
-        
+        int textHeight = lines.size() * lineHeight;
+        int captionHeight = bitmapCaptionLines.size() * lineHeight;
+        int captionGap = captionHeight > 0 ? 10 : 0;
+        int imageGap = (bitmap != nullptr && bitmapWidth > 0 && bitmapHeight > 0) ? 12 : 0;
+        int totalHeight = textHeight + captionGap + captionHeight + imageGap + bitmapHeight;
+
         int startY = (logicalHeight - totalHeight) / 2 + 16;
-        
+        if (bitmap != nullptr && bitmapWidth > 0 && bitmapHeight > 0) {
+            startY -= 18; // Nudge warning text upward to make room for the illustration.
+        }
         if (startY < 20) startY = 20; // Safety clamp
 
         // --- 3. Draw Lines (Centered) ---
@@ -485,6 +535,25 @@ void displayMessage(String text) {
             
             startY += lineHeight;
         }
+
+        if (!bitmapCaptionLines.empty()) {
+            startY += captionGap;
+            for (const String& line : bitmapCaptionLines) {
+                int w = u8g2.getUTF8Width(line.c_str());
+                int x = (logicalWidth - w) / 2;
+                if (x < 0) x = 0;
+
+                u8g2.drawUTF8(x, startY, line.c_str());
+                startY += lineHeight;
+            }
+        }
+
+        if (bitmap != nullptr && bitmapWidth > 0 && bitmapHeight > 0) {
+            int imageX = (logicalWidth - bitmapWidth) / 2;
+            if (imageX < 0) imageX = 0;
+            int imageY = startY + imageGap;
+            paint_gfx.drawBitmap(imageX, imageY, bitmap, bitmapWidth, bitmapHeight, 1);
+        }
         
         // Reset Scale
         paint_gfx.setScale(1.0);
@@ -496,6 +565,10 @@ void displayMessage(String text) {
         // BlackImage = NULL;
         Serial.println("displayMessage done");
     }
+}
+
+void displayMessage(String text) {
+    displayMessageWithBitmap(text, nullptr, 0, 0);
 }
 
 void displayCalendarPage(bool partial_update = false) {
@@ -948,6 +1021,17 @@ void drawIconFromProgmem(const unsigned char* data, int x, int y, int w, int h, 
     }
 }
 
+void drawNoIconPlaceholder(int x, int y, int w, int h) {
+    paint_gfx.drawRect(x, y, w, h, 1);
+    u8g2.setFont(u8g2_font_5x7_tf);
+    const char* label = "no icon";
+    int textW = u8g2.getUTF8Width(label);
+    int textX = x + (w - textW) / 2;
+    if (textX < x + 2) textX = x + 2;
+    int textY = y + (h / 2) + 3;
+    u8g2.drawUTF8(textX, textY, label);
+}
+
 void displayWeatherDashboard(bool partial_update, bool sendSignal) {
     DEV_Module_Init();
     
@@ -975,7 +1059,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         paint_gfx.drawFastVLine(200, 5, 135, 1); 
 
         // Draw Thermometer Icon (Top Right)
-        drawIconFromProgmem(gImage_tem, 375, 5, 20, 36, 1);
+        drawIconFromProgmem(getOtherIconData("tem"), 375, 5, 20, 36, 1);
         
         // === LEFT SIDE (Date & Time) ===
         if (config.ui_mode == 0) {
@@ -1008,7 +1092,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             }
             
             if (hasEvent) {
-                  drawIconFromProgmem(gImage_bell, timeX - 27, 31, 20, 20, 1);
+                  drawIconFromProgmem(getOtherIconData("bell"), timeX - 27, 31, 20, 20, 1);
              }
             
             if (solarDate.length() > 0) {
@@ -1055,7 +1139,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
 
             if (hasEvent) {
                 // Draw bell icon to the left of the box
-                drawIconFromProgmem(gImage_bell, boxX - 23, boxY + 15, 20, 20, 1);
+                drawIconFromProgmem(getOtherIconData("bell"), boxX - 23, boxY + 15, 20, 20, 1);
             }
 
             // Draw stylized box with a single outer border and split colors
@@ -1102,13 +1186,13 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             if (weekDay.length() > 0) {
                 // Determine which icon to use based on weekDay
                 const unsigned char* weekIcon = NULL;
-                if (weekDay.indexOf("一") >= 0 || weekDay.indexOf("Mon") >= 0) weekIcon = gImage_mon;
-                else if (weekDay.indexOf("二") >= 0 || weekDay.indexOf("Tue") >= 0) weekIcon = gImage_tue;
-                else if (weekDay.indexOf("三") >= 0 || weekDay.indexOf("Wed") >= 0) weekIcon = gImage_wed;
-                else if (weekDay.indexOf("四") >= 0 || weekDay.indexOf("Thu") >= 0) weekIcon = gImage_thu;
-                else if (weekDay.indexOf("五") >= 0 || weekDay.indexOf("Fri") >= 0) weekIcon = gImage_fri;
-                else if (weekDay.indexOf("六") >= 0 || weekDay.indexOf("Sat") >= 0) weekIcon = gImage_sat;
-                else if (weekDay.indexOf("日") >= 0 || weekDay.indexOf("Sun") >= 0) weekIcon = gImage_sun;
+                if (weekDay.indexOf("一") >= 0 || weekDay.indexOf("Mon") >= 0) weekIcon = getOtherIconData("mon");
+                else if (weekDay.indexOf("二") >= 0 || weekDay.indexOf("Tue") >= 0) weekIcon = getOtherIconData("tue");
+                else if (weekDay.indexOf("三") >= 0 || weekDay.indexOf("Wed") >= 0) weekIcon = getOtherIconData("wed");
+                else if (weekDay.indexOf("四") >= 0 || weekDay.indexOf("Thu") >= 0) weekIcon = getOtherIconData("thu");
+                else if (weekDay.indexOf("五") >= 0 || weekDay.indexOf("Fri") >= 0) weekIcon = getOtherIconData("fri");
+                else if (weekDay.indexOf("六") >= 0 || weekDay.indexOf("Sat") >= 0) weekIcon = getOtherIconData("sat");
+                else if (weekDay.indexOf("日") >= 0 || weekDay.indexOf("Sun") >= 0) weekIcon = getOtherIconData("sun");
                 
                 if (weekIcon) {
                     // Draw icon (200x36)
@@ -1148,44 +1232,28 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             if (iconCode.length() == 0) iconCode = currentForecast[0].icon_day;
             if (condText.length() == 0) condText = currentForecast[0].cond_day;
             
-            // 1. 图标显示逻辑
+            // 1. 图标显示逻辑: Array -> BMP -> "no icon"
             bool iconDrawn = false;
             if (iconCode.length() > 0) {
-                // Check for Large icon first (-L)
-                String iconPathL = "/icons/" + iconCode + "-L.bmp";
-                if (LittleFS.exists(iconPathL)) {
-                    drawBmp(iconPathL, iconX, 25, 1); 
+                // Exact code match from MQTT payload, no implicit conversion
+                const unsigned char* iconData = getMediumIconData(iconCode);
+                if (iconData) {
+                    drawIconFromProgmem(iconData, iconX - 4, 25, 72, 72, 1);
                     iconDrawn = true;
-                } else {
-                    String iconPath = "/icons/" + iconCode + ".bmp";
-                    if (LittleFS.exists(iconPath)) {
-                        drawBmp(iconPath, iconX, 25, 2); 
-                        iconDrawn = true;
-                    }
                 }
             }
-            // 2. Try icons.h (Progmem)
+
+            // Fallback to BMP if array icon not found
             if (!iconDrawn && iconCode.length() > 0) {
-                 // Try Large icon first
-                 const unsigned char* iconDataL = getIconData(iconCode + "-L");
-                 if (iconDataL) {
-                     // Assume Large icon is 72x72 (User specified)
-                     drawIconFromProgmem(iconDataL, iconX - 4, 25, 72, 72, 1); 
-                     iconDrawn = true;
-                 } else {
-                     // Fallback to standard icon
-                     const unsigned char* iconData = getIconData(iconCode);
-                     if (iconData) {
-                         // Data is 36x36, render full size to avoid cropping
-                         drawIconFromProgmem(iconData, iconX, 25, 36, 36, 2); // Scale 2x (72x72)
-                         iconDrawn = true;
-                     }
-                 }
+                String iconPath = "/icons/" + iconCode + ".bmp";
+                if (LittleFS.exists(iconPath)) {
+                    drawBmp(iconPath, iconX, 25, 1);
+                    iconDrawn = true;
+                }
             }
+
             if (!iconDrawn) {
-                u8g2.setFont(u8g2_font_open_iconic_weather_6x_t);
-                char iconStr[2] = {getIconChar(condText), 0};
-                u8g2.drawUTF8(iconX + 12, 73, iconStr);
+                drawNoIconPlaceholder(iconX, 25, 72, 72);
             }
             
             // 2. 温度显示 (高温/低温)
@@ -1348,40 +1416,46 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             
             bool dayIconDrawn = false;
             if (currentForecast[i].icon_day.length() > 0) {
-                String iconPath = "/icons/" + currentForecast[i].icon_day + ".bmp";
-                if (LittleFS.exists(iconPath)) {
-                    drawBmp(iconPath, centerX - 16, iconY); 
+                // Exact code match for lower forecast icons
+                const unsigned char* iconData = getSmallIconData(currentForecast[i].icon_day);
+                if (iconData) {
+                    drawIconFromProgmem(iconData, centerX - 18, iconY - 7, 36, 36, 1);
                     dayIconDrawn = true;
                 }
             }
+
             if (!dayIconDrawn && currentForecast[i].icon_day.length() > 0) {
-                 const unsigned char* iconData = getIconData(currentForecast[i].icon_day);
-                 if (iconData) drawIconFromProgmem(iconData, centerX - 18, iconY -7, 36, 36, 1); 
-                 dayIconDrawn = true;
+                String iconPath = "/icons/" + currentForecast[i].icon_day + ".bmp";
+                if (LittleFS.exists(iconPath)) {
+                    drawBmp(iconPath, centerX - 16, iconY);
+                    dayIconDrawn = true;
+                }
+            }
+
+            if (!dayIconDrawn) {
+                drawNoIconPlaceholder(centerX - 18, iconY - 7, 36, 36);
             }
             
             // Night Icon (Moved DOWN to startY + 102)
             bool nightIconDrawn = false;
             if (currentForecast[i].icon_night.length() > 0) {
-                String iconPath = "/icons/" + currentForecast[i].icon_night + ".bmp";
-                if (LittleFS.exists(iconPath)) {
-                     drawBmp(iconPath, centerX - 16, startY + 104);   
-                     nightIconDrawn = true;
+                const unsigned char* iconData = getSmallIconData(currentForecast[i].icon_night);
+                if (iconData) {
+                    drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, 1);
+                    nightIconDrawn = true;
                 }
             }
-            
+
             if (!nightIconDrawn && currentForecast[i].icon_night.length() > 0) {
-                 const unsigned char* iconData = getIconData(currentForecast[i].icon_night);
-                 if (iconData) {
-                     drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, 1); 
-                     nightIconDrawn = true;
-                 }
+                String iconPath = "/icons/" + currentForecast[i].icon_night + ".bmp";
+                if (LittleFS.exists(iconPath)) {
+                    drawBmp(iconPath, centerX - 16, startY + 104);
+                    nightIconDrawn = true;
+                }
             }
 
             if (!nightIconDrawn) {
-                u8g2.setFont(u8g2_font_open_iconic_weather_4x_t);
-                char nightIconStr[2] = {getIconChar(currentForecast[i].cond_night), 0};
-                u8g2.drawUTF8(centerX - 16, startY + 132, nightIconStr); // 104+28 approx
+                drawNoIconPlaceholder(centerX - 18, startY + 104, 36, 36);
             }
 
             // Separator line removed
@@ -2201,6 +2275,10 @@ void setup() {
   pinMode(BYE_SIGNAL_PIN, OUTPUT);
   digitalWrite(BYE_SIGNAL_PIN, HIGH); // Default HIGH
 
+  // ADC measurement power switch defaults to off to minimize divider standby current.
+  pinMode(ADC_SWITCH_EN_PIN, OUTPUT);
+  setAdcMeasurementPower(false);
+
   // Mode Pin Indicator (Input-only on GPIO 35)
   pinMode(MODE_PIN, INPUT);
   delay(100); // Wait for pin voltage to stabilize
@@ -2233,7 +2311,7 @@ void setup() {
   if (modeState == HIGH && currentVoltage > 0.1 && currentVoltage < config.low_battery_threshold) {
       Serial.printf("Low Battery Detected: %.2fV (Threshold: %.2fV)\n", currentVoltage, config.low_battery_threshold);
       String warnMsg = "LOW BATTERY WARNING!\nVoltage: " + String(currentVoltage, 2) + "V\nPlease charge the device.";
-      displayMessage(warnMsg);
+      displayMessageWithBitmap(warnMsg, getOtherIconData("ink"), 128, 128);
       
       // Stop execution and go to deep sleep if possible or just loop forever
       // For now, we loop forever to prevent further battery drain from WiFi/Display
@@ -2293,7 +2371,7 @@ void setup() {
               String networkInfo = "WiFi Connected!\n";
               networkInfo += "IP: " + WiFi.localIP().toString() + "\n";
               networkInfo += "GW: " + WiFi.gatewayIP().toString();
-              displayMessage(networkInfo);
+              displayMessageWithBitmap(networkInfo, getOtherIconData("ink"), 128, 128);
               delay(2000); // Give user some time to see the info
           }
           // AP remains disabled unless WiFi fails or is not configured
@@ -2739,6 +2817,8 @@ void enterDeepSleep() {
     pinMode(LED_PIN, INPUT);
     pinMode(MODE_PIN, INPUT);
     pinMode(BYE_SIGNAL_PIN, INPUT);
+    setAdcMeasurementPower(false);
+    pinMode(ADC_SWITCH_EN_PIN, INPUT);
     if (config.adc_pin >= 0) pinMode(config.adc_pin, INPUT);
     
     // 1. Shut down Radio and Wireless

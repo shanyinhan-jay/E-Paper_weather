@@ -54,6 +54,7 @@
     #define BUTTON_PIN   0
     #define LED_PIN      2
     #define UNUSED_PIN   4  // Was MODE_PIN
+    #define ADC_SWITCH_EN_PIN 5 // High = enable ADC divider power via TPS22860
     #define BYE_SIGNAL_PIN 18 // Low when task finished
     #define MODE_PIN     19 // High = Battery Mode, Low = DC Mode (Input-only, external pull-up/down required)
 
