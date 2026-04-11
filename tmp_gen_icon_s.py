@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 
 icon_dir = Path('d:/ink/E-Paper_weather/e_weather/icon')
 small_dir = icon_dir / '3636'
@@ -14,7 +14,7 @@ lines += ['']
 
 lines += ['static const WeatherIconMapEntryS WEATHER_ICON_MAP_S[] = {']
 for c in codes:
-    lines += [f'  {{ "{c}", gImage_{c} }},']
+    lines += [f'  {{ "{c}", gImage_{c}_S }},']
 lines += ['};', '']
 
 lines += ['static const size_t WEATHER_ICON_MAP_S_COUNT = sizeof(WEATHER_ICON_MAP_S) / sizeof(WEATHER_ICON_MAP_S[0]);', '']
