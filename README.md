@@ -100,3 +100,46 @@
 - 使用 **Visual Studio Code** + **PlatformIO** 或 **Arduino IDE** 进行开发。
 - 依赖库: `Adafruit GFX`, `U8g2_for_Adafruit_GFX`, `ArduinoJson`, `LittleFS` 等。
 - 确保分区表选择支持 LittleFS 的方案（如 `min_spiffs` 或自定义分区）。
+
+## 🎨 图标资源自动化
+- 图标目录：
+  - `e_weather/icon/7272`（主天气 72x72）
+  - `e_weather/icon/3636`（六天天气 36x36）
+- 自动生成头文件：
+  - `e_weather/icon/icon_m.h`
+  - `e_weather/icon/icon_s.h`
+- 一键命令（项目根目录执行）：
+
+```bash
+python tools/icons/gen_all_icons.py
+```
+
+- 生成后自动编译验证：
+
+```bash
+python tools/icons/gen_all_icons.py --compile
+```
+
+- 严格检查 `7272` 与 `3636` 代码集一致性（不一致则返回错误）：
+
+```bash
+python tools/icons/gen_all_icons.py --strict
+```
+
+- 严格模式并编译（推荐 CI）：
+
+```bash
+python tools/icons/gen_all_icons.py --strict --compile
+```
+
+- MQTT 图标契约覆盖率校验：
+  - 契约文件：`tools/icons/mqtt_icon_codes.txt`
+  - 自动检查：`MQTT code -> 7272 array -> 3636 array -> BMP fallback`
+  - 构建时输出缺失清单，便于发现“消息有、图标缺”的问题。
+
+- 兼容说明：
+  - 支持 `.c` 内不同变量命名格式（如 `gImage_350` / `gImage_350_M`）。
+  - 生成头文件时会自动做符号别名（`_M` / `_S`），避免 72x72 与 36x36 的同名冲突。
+
+- 交接文档：
+  - 设计替图与开发一键流程见 `tools/icons/README.md`。

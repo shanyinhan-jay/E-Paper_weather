@@ -968,31 +968,24 @@ void drawBmp(String filename, int x, int y, int scale = 1) {
 // Add font declaration
 extern const uint8_t u8g2_font_logisoso50_tf[] U8G2_FONT_SECTION("u8g2_font_logisoso50_tf");
 
-void drawIconFromProgmem(const unsigned char* data, int x, int y, int w, int h, int scale = 1) {
-    if (!data) return;
+enum class IconRenderMode : uint8_t {
+    Exact = 0,
+    Scale2x = 1,
+    Downscale2x = 2,
+};
 
-    // Auto-adjust scale if image is large (e.g. user provided high-res 2x image)
-    bool downscale = false;
-    if (w > 60) {
-        if (scale == 2) {
-            scale = 1;      // Main Icon: Use full resolution
-        } else if (scale == 1) {
-             // Only downscale if we are NOT in the main icon area (y=30)
-             if (y > 60) { 
-                 downscale = true; // Forecast Icon: Downscale to 50%
-             }
-        }
-    }
+void drawIconFromProgmem(const unsigned char* data, int x, int y, int w, int h, IconRenderMode mode = IconRenderMode::Exact) {
+    if (!data) return;
     
     // Calculate bytes per row (stride) based on width
     // Standard bitmap format: rows are byte-aligned
     int bytesPerRow = (w + 7) / 8;
     
     for (int row = 0; row < h; row++) {
-        if (downscale && (row % 2 != 0)) continue; // Skip odd rows
+        if (mode == IconRenderMode::Downscale2x && (row % 2 != 0)) continue; // Skip odd rows
 
         for (int col = 0; col < w; col++) {
-            if (downscale && (col % 2 != 0)) continue; // Skip odd cols
+            if (mode == IconRenderMode::Downscale2x && (col % 2 != 0)) continue; // Skip odd cols
 
             // Calculate byte index and bit index
             int byteIdx = row * bytesPerRow + (col / 8);
@@ -1001,20 +994,16 @@ void drawIconFromProgmem(const unsigned char* data, int x, int y, int w, int h, 
             uint8_t b = pgm_read_byte(&data[byteIdx]);
             
             if (b & (1 << bitIdx)) {
-                // Draw pixel with scaling
-                if (downscale) {
+                if (mode == IconRenderMode::Downscale2x) {
                     paint_gfx.drawPixel(x + col / 2, y + row / 2, 1);
+                } else if (mode == IconRenderMode::Scale2x) {
+                    // Draw a 2x2 block for each source pixel
+                    paint_gfx.drawPixel(x + col * 2, y + row * 2, 1);
+                    paint_gfx.drawPixel(x + col * 2 + 1, y + row * 2, 1);
+                    paint_gfx.drawPixel(x + col * 2, y + row * 2 + 1, 1);
+                    paint_gfx.drawPixel(x + col * 2 + 1, y + row * 2 + 1, 1);
                 } else {
-                    if (scale == 1) {
-                        paint_gfx.drawPixel(x + col, y + row, 1);
-                    } else {
-                        // Draw a block for scaled pixel
-                        for (int dy = 0; dy < scale; dy++) {
-                            for (int dx = 0; dx < scale; dx++) {
-                                paint_gfx.drawPixel(x + col * scale + dx, y + row * scale + dy, 1);
-                            }
-                        }
-                    }
+                    paint_gfx.drawPixel(x + col, y + row, 1);
                 }
             }
         }
@@ -1072,7 +1061,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         paint_gfx.drawFastVLine(200, 5, 135, 1); 
 
         // Draw Thermometer Icon (Top Right)
-        drawIconFromProgmem(getOtherIconData("tem"), 375, 5, 20, 36, 1);
+        drawIconFromProgmem(getOtherIconData("tem"), 375, 5, 20, 36);
         
         // === LEFT SIDE (Date & Time) ===
         if (config.ui_mode == 0) {
@@ -1105,7 +1094,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             }
             
             if (hasEvent) {
-                  drawIconFromProgmem(getOtherIconData("bell"), timeX - 27, 31, 20, 20, 1);
+                  drawIconFromProgmem(getOtherIconData("bell"), timeX - 27, 31, 20, 20);
              }
             
             if (solarDate.length() > 0) {
@@ -1152,7 +1141,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
 
             if (hasEvent) {
                 // Draw bell icon to the left of the box
-                drawIconFromProgmem(getOtherIconData("bell"), boxX - 23, boxY + 15, 20, 20, 1);
+                drawIconFromProgmem(getOtherIconData("bell"), boxX - 23, boxY + 15, 20, 20);
             }
 
             // Draw stylized box with a single outer border and split colors
@@ -1210,7 +1199,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
                 if (weekIcon) {
                     // Draw icon (200x36)
                     // Centering in 200px panel: 100 - (200/2) = 0.
-                    drawIconFromProgmem(weekIcon, 50, 81, 200, 36, 1);
+                    drawIconFromProgmem(weekIcon, 50, 81, 200, 36);
                 } else {
                     // Fallback to text if icon not found
                     u8g2.setFont(u8g2_font_wqy12_t_gb2312);
@@ -1252,7 +1241,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
                 // Exact code match from MQTT payload, no implicit conversion
                 const unsigned char* iconData = getMediumIconData(lookupIconCode);
                 if (iconData) {
-                    drawIconFromProgmem(iconData, iconX - 4, 25, 72, 72, 1);
+                    drawIconFromProgmem(iconData, iconX - 4, 25, 72, 72, IconRenderMode::Exact);
                     iconDrawn = true;
                 }
             }
@@ -1323,7 +1312,6 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             int wdY = 115; // Align with lunar date (y=120 -> 115)
             
             // 绘制第一部分 
-            u8g2.drawUTF8(wdX, wdY, weatherDetailPart1.c_str());
             u8g2.drawUTF8(wdX, wdY, weatherDetailPart1.c_str());
             
             // 绘制第二部分 "级"
@@ -1434,7 +1422,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
                 // Exact code match for lower forecast icons
                 const unsigned char* iconData = getSmallIconData(dayLookupCode);
                 if (iconData) {
-                    drawIconFromProgmem(iconData, centerX - 18, iconY - 7, 36, 36, 1);
+                    drawIconFromProgmem(iconData, centerX - 18, iconY - 7, 36, 36, IconRenderMode::Exact);
                     dayIconDrawn = true;
                 }
             }
@@ -1457,7 +1445,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             if (nightLookupCode.length() > 0) {
                 const unsigned char* iconData = getSmallIconData(nightLookupCode);
                 if (iconData) {
-                    drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, 1);
+                    drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, IconRenderMode::Exact);
                     nightIconDrawn = true;
                 }
             }

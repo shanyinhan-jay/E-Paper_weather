@@ -192,6 +192,9 @@ typedef struct {
 #define gImage_901 gImage_901_M
 #include "7272/901.c"
 #undef gImage_901
+#define gImage_999 gImage_999_M
+#include "7272/999.c"
+#undef gImage_999
 
 static const WeatherIconMapEntryM WEATHER_ICON_MAP_M[] = {
   { "100", gImage_100_M },
@@ -255,6 +258,7 @@ static const WeatherIconMapEntryM WEATHER_ICON_MAP_M[] = {
   { "515", gImage_515_M },
   { "900", gImage_900_M },
   { "901", gImage_901_M },
+  { "999", gImage_999_M },
 };
 
 static const size_t WEATHER_ICON_MAP_M_COUNT = sizeof(WEATHER_ICON_MAP_M) / sizeof(WEATHER_ICON_MAP_M[0]);
