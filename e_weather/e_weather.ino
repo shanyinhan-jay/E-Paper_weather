@@ -1032,6 +1032,19 @@ void drawNoIconPlaceholder(int x, int y, int w, int h) {
     u8g2.drawUTF8(textX, textY, label);
 }
 
+static String normalizeWeatherIconCode(const String& rawCode) {
+    String code = rawCode;
+    code.trim();
+    if (code.length() > 5) {
+        String lower = code;
+        lower.toLowerCase();
+        if (lower.endsWith("-fill")) {
+            code = code.substring(0, code.length() - 5);
+        }
+    }
+    return code;
+}
+
 void displayWeatherDashboard(bool partial_update, bool sendSignal) {
     DEV_Module_Init();
     
@@ -1231,12 +1244,13 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             String condText = isNight ? currentForecast[0].cond_night : currentForecast[0].cond_day;
             if (iconCode.length() == 0) iconCode = currentForecast[0].icon_day;
             if (condText.length() == 0) condText = currentForecast[0].cond_day;
+            String lookupIconCode = normalizeWeatherIconCode(iconCode);
             
             // 1. 图标显示逻辑: Array -> BMP -> "no icon"
             bool iconDrawn = false;
-            if (iconCode.length() > 0) {
+            if (lookupIconCode.length() > 0) {
                 // Exact code match from MQTT payload, no implicit conversion
-                const unsigned char* iconData = getMediumIconData(iconCode);
+                const unsigned char* iconData = getMediumIconData(lookupIconCode);
                 if (iconData) {
                     drawIconFromProgmem(iconData, iconX - 4, 25, 72, 72, 1);
                     iconDrawn = true;
@@ -1244,8 +1258,8 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             }
 
             // Fallback to BMP if array icon not found
-            if (!iconDrawn && iconCode.length() > 0) {
-                String iconPath = "/icons/" + iconCode + ".bmp";
+            if (!iconDrawn && lookupIconCode.length() > 0) {
+                String iconPath = "/icons/" + lookupIconCode + ".bmp";
                 if (LittleFS.exists(iconPath)) {
                     drawBmp(iconPath, iconX, 25, 1);
                     iconDrawn = true;
@@ -1413,19 +1427,20 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             // Was startY + 2. Date ends at startY + 12. Icon needs space.
             // Let's move icon to startY + 16.
             int iconY = startY + 16;
+            String dayLookupCode = normalizeWeatherIconCode(currentForecast[i].icon_day);
             
             bool dayIconDrawn = false;
-            if (currentForecast[i].icon_day.length() > 0) {
+            if (dayLookupCode.length() > 0) {
                 // Exact code match for lower forecast icons
-                const unsigned char* iconData = getSmallIconData(currentForecast[i].icon_day);
+                const unsigned char* iconData = getSmallIconData(dayLookupCode);
                 if (iconData) {
                     drawIconFromProgmem(iconData, centerX - 18, iconY - 7, 36, 36, 1);
                     dayIconDrawn = true;
                 }
             }
 
-            if (!dayIconDrawn && currentForecast[i].icon_day.length() > 0) {
-                String iconPath = "/icons/" + currentForecast[i].icon_day + ".bmp";
+            if (!dayIconDrawn && dayLookupCode.length() > 0) {
+                String iconPath = "/icons/" + dayLookupCode + ".bmp";
                 if (LittleFS.exists(iconPath)) {
                     drawBmp(iconPath, centerX - 16, iconY);
                     dayIconDrawn = true;
@@ -1437,17 +1452,18 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             }
             
             // Night Icon (Moved DOWN to startY + 102)
+            String nightLookupCode = normalizeWeatherIconCode(currentForecast[i].icon_night);
             bool nightIconDrawn = false;
-            if (currentForecast[i].icon_night.length() > 0) {
-                const unsigned char* iconData = getSmallIconData(currentForecast[i].icon_night);
+            if (nightLookupCode.length() > 0) {
+                const unsigned char* iconData = getSmallIconData(nightLookupCode);
                 if (iconData) {
                     drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, 1);
                     nightIconDrawn = true;
                 }
             }
 
-            if (!nightIconDrawn && currentForecast[i].icon_night.length() > 0) {
-                String iconPath = "/icons/" + currentForecast[i].icon_night + ".bmp";
+            if (!nightIconDrawn && nightLookupCode.length() > 0) {
+                String iconPath = "/icons/" + nightLookupCode + ".bmp";
                 if (LittleFS.exists(iconPath)) {
                     drawBmp(iconPath, centerX - 16, startY + 104);
                     nightIconDrawn = true;
