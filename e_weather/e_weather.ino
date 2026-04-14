@@ -33,6 +33,7 @@
 #include "icon/icon_m.h"
 #include "icon/icon_s.h"
 #include "icon/icon_o.h"
+#include "icon/icon_w.h"
 #include "AppConfig.h"
 #include "WebHandler.h"
 
@@ -1187,19 +1188,24 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             // Weekday Icon at y=72 (Slightly overlap/close to box)
             if (weekDay.length() > 0) {
                 // Determine which icon to use based on weekDay
-                const unsigned char* weekIcon = NULL;
-                if (weekDay.indexOf("一") >= 0 || weekDay.indexOf("Mon") >= 0) weekIcon = getOtherIconData("mon");
-                else if (weekDay.indexOf("二") >= 0 || weekDay.indexOf("Tue") >= 0) weekIcon = getOtherIconData("tue");
-                else if (weekDay.indexOf("三") >= 0 || weekDay.indexOf("Wed") >= 0) weekIcon = getOtherIconData("wed");
-                else if (weekDay.indexOf("四") >= 0 || weekDay.indexOf("Thu") >= 0) weekIcon = getOtherIconData("thu");
-                else if (weekDay.indexOf("五") >= 0 || weekDay.indexOf("Fri") >= 0) weekIcon = getOtherIconData("fri");
-                else if (weekDay.indexOf("六") >= 0 || weekDay.indexOf("Sat") >= 0) weekIcon = getOtherIconData("sat");
-                else if (weekDay.indexOf("日") >= 0 || weekDay.indexOf("Sun") >= 0) weekIcon = getOtherIconData("sun");
+                const int dateCenterX = 100;
+                const int weekIconW = 150;
+                const int weekIconH = 27;
+                const int weekIconX = dateCenterX - (weekIconW / 2);
+                const int weekIconY = 75;
+                String weekCode = "";
+                if (weekDay.indexOf("一") >= 0 || weekDay.indexOf("Mon") >= 0) weekCode = "mon";
+                else if (weekDay.indexOf("二") >= 0 || weekDay.indexOf("Tue") >= 0) weekCode = "tue";
+                else if (weekDay.indexOf("三") >= 0 || weekDay.indexOf("Wed") >= 0) weekCode = "wed";
+                else if (weekDay.indexOf("四") >= 0 || weekDay.indexOf("Thu") >= 0) weekCode = "thu";
+                else if (weekDay.indexOf("五") >= 0 || weekDay.indexOf("Fri") >= 0) weekCode = "fri";
+                else if (weekDay.indexOf("六") >= 0 || weekDay.indexOf("Sat") >= 0) weekCode = "sat";
+                else if (weekDay.indexOf("日") >= 0 || weekDay.indexOf("Sun") >= 0) weekCode = "sun";
+                const unsigned char* weekIcon = weekCode.length() > 0 ? getWeekIconData(weekCode) : NULL;
                 
                 if (weekIcon) {
-                    // Draw icon (200x36)
-                    // Centering in 200px panel: 100 - (200/2) = 0.
-                    drawIconFromProgmem(weekIcon, 50, 81, 200, 36);
+                    // Draw pre-sized week icon: 150x27, centered by date center X.
+                    drawIconFromProgmem(weekIcon, weekIconX, weekIconY, weekIconW, weekIconH, IconRenderMode::Exact);
                 } else {
                     // Fallback to text if icon not found
                     u8g2.setFont(u8g2_font_wqy12_t_gb2312);
