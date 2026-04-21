@@ -46,6 +46,17 @@
 #include <OneButton.h>
 #include <vector>
 
+#ifndef ENABLE_DRIVER_LOCAL
+#define ENABLE_DRIVER_LOCAL 1
+#endif
+#ifndef ENABLE_DRIVER_GX2IC
+#define ENABLE_DRIVER_GX2IC 0
+#endif
+
+#if ENABLE_DRIVER_GX2IC
+#include <GxEPD2_2IC_BW.h>
+#endif
+
 extern const uint8_t u8g2_font_wqy12_t_gb2312[] U8X8_PROGMEM;
 // extern const uint8_t u8g2_font_wqy16_t_gb2312[] U8X8_PROGMEM;
 // extern const uint8_t u8g2_font_wqy14_t_gb2312[] U8X8_PROGMEM; 
@@ -75,6 +86,18 @@ String ap_ssid = DEFAULT_AP_SSID_BASE;
 #define MAX_SHIFT_EVENTS 100
 
 Config config;
+
+enum DisplayDriverType : uint8_t {
+    DISPLAY_DRIVER_LOCAL = 0,
+    DISPLAY_DRIVER_GX2IC = 1
+};
+
+#if ENABLE_DRIVER_GX2IC
+// Use the same GPIO mapping as Local_EPD_4IN2 for consistent wiring.
+GxEPD2_2IC_BW<GxEPD2_2IC_420_A03, GxEPD2_2IC_420_A03::HEIGHT> gxDisplay(
+    GxEPD2_2IC_420_A03(EPD_CS_PIN, EPD_SCK_PIN, EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN)
+);
+#endif
 
 struct CalendarEvent {
     time_t start_time;
@@ -231,6 +254,74 @@ public:
 Paint_GFX paint_gfx;
 U8G2_FOR_ADAFRUIT_GFX u8g2;
 
+static inline bool jsonHasKey(const JsonVariantConst& obj, const char* key) {
+  return !obj[key].isNull();
+}
+
+static bool isDriverAvailable(int driver) {
+    if (driver == DISPLAY_DRIVER_LOCAL) {
+#if ENABLE_DRIVER_LOCAL
+        return true;
+#else
+        return false;
+#endif
+    }
+    if (driver == DISPLAY_DRIVER_GX2IC) {
+#if ENABLE_DRIVER_GX2IC
+        return true;
+#else
+        return false;
+#endif
+    }
+    return false;
+}
+
+static int getDefaultAvailableDriver() {
+#if ENABLE_DRIVER_LOCAL
+    return DISPLAY_DRIVER_LOCAL;
+#elif ENABLE_DRIVER_GX2IC
+    return DISPLAY_DRIVER_GX2IC;
+#else
+    return DISPLAY_DRIVER_LOCAL;
+#endif
+}
+
+static int getActiveDisplayDriver() {
+    if (isDriverAvailable(config.display_driver)) return config.display_driver;
+    return getDefaultAvailableDriver();
+}
+
+static void applyDisplayDriverConfigFallback() {
+    if (!isDriverAvailable(config.display_driver)) {
+        int fallback = getDefaultAvailableDriver();
+        Serial.printf("Configured display_driver=%d unavailable, fallback=%d\n", config.display_driver, fallback);
+        config.display_driver = fallback;
+    }
+}
+
+static void epdFlushFrame(bool partial_update, UBYTE* image) {
+    int driver = getActiveDisplayDriver();
+    if (driver == DISPLAY_DRIVER_LOCAL) {
+#if ENABLE_DRIVER_LOCAL
+        if (partial_update) {
+            Local_EPD_4IN2_Init_Partial();
+            Local_EPD_4IN2_PartialDisplay(0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, image);
+        } else {
+            Local_EPD_4IN2_Init();
+            Local_EPD_4IN2_Display(image);
+        }
+#endif
+        return;
+    }
+
+#if ENABLE_DRIVER_GX2IC
+    // GxEPD2 path currently uses full refresh for stability across panel variants.
+    gxDisplay.init(0);
+    gxDisplay.setRotation(0);
+    gxDisplay.drawImage(image, 0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, false, false, false);
+#endif
+}
+
 void loadConfig() {
   if (LittleFS.begin(true)) {
     if (LittleFS.exists("/config.json")) {
@@ -269,6 +360,7 @@ void loadConfig() {
           config.day_end_hour = doc["day_end_hour"] | 18;
           config.invert_display = doc["invert_display"] | false;
           config.ui_mode = doc["ui_mode"] | 0;
+          config.display_driver = doc["display_driver"] | 0;
           config.adc_pin = doc["adc_pin"] | 34;
           config.adc_ratio = doc["adc_ratio"] | 2.0;
           config.low_battery_threshold = doc["low_battery_threshold"] | 3.3;
@@ -284,6 +376,8 @@ void loadConfig() {
       }
     }
   }
+
+  applyDisplayDriverConfigFallback();
 
   // Pre-allocate BlackImage to avoid fragmentation
   if (BlackImage == NULL) {
@@ -326,6 +420,7 @@ void saveConfig() {
   doc["day_end_hour"] = config.day_end_hour;
   doc["invert_display"] = config.invert_display;
   doc["ui_mode"] = config.ui_mode;
+  doc["display_driver"] = config.display_driver;
   doc["adc_pin"] = config.adc_pin;
   doc["adc_ratio"] = config.adc_ratio;
   doc["low_battery_threshold"] = config.low_battery_threshold;
@@ -398,7 +493,6 @@ void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitm
     Serial.printf("Free Heap: %u\n", ESP.getFreeHeap());
     
     DEV_Module_Init();
-    Local_EPD_4IN2_Init();
     
     if (BlackImage == NULL) {
          Serial.println("Error: BlackImage is NULL (Should be allocated in setup)");
@@ -560,7 +654,7 @@ void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitm
         paint_gfx.setScale(1.0);
 
         Serial.println("Displaying");
-        Local_EPD_4IN2_Display(BlackImage);
+        epdFlushFrame(false, BlackImage);
         hibernateEPD();
         // free(BlackImage); // Keep allocated to prevent fragmentation
         // BlackImage = NULL;
@@ -758,13 +852,7 @@ void displayCalendarPage(bool partial_update = false) {
             }
          }
 
-        if (partial_update) {
-            Local_EPD_4IN2_Init_Partial();
-            Local_EPD_4IN2_PartialDisplay(0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, BlackImage);
-        } else {
-            Local_EPD_4IN2_Init();
-            Local_EPD_4IN2_Display(BlackImage);
-        }
+        epdFlushFrame(partial_update, BlackImage);
         hibernateEPD();
         
         // free(BlackImage); // Keep allocated
@@ -1514,13 +1602,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         }
 
         // 刷屏控制
-        if (partial_update) {
-            Local_EPD_4IN2_Init_Partial();
-            Local_EPD_4IN2_PartialDisplay(0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, BlackImage);
-        } else {
-            Local_EPD_4IN2_Init();
-            Local_EPD_4IN2_Display(BlackImage);
-        }
+        epdFlushFrame(partial_update, BlackImage);
         hibernateEPD();
         
         // Signal completion via Serial2 ONLY if requested (weather MQTT updates)
@@ -1545,8 +1627,17 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
 
 void hibernateEPD() {
     Serial.println("Hibernating EPD...");
-    // 1. Put EPD to deep sleep mode via its controller
-    Local_EPD_4IN2_Sleep();
+    int driver = getActiveDisplayDriver();
+    if (driver == DISPLAY_DRIVER_LOCAL) {
+#if ENABLE_DRIVER_LOCAL
+        // 1. Put EPD to deep sleep mode via its controller
+        Local_EPD_4IN2_Sleep();
+#endif
+    } else {
+#if ENABLE_DRIVER_GX2IC
+        gxDisplay.hibernate();
+#endif
+    }
     
     // 2. Disable all possible EPD pins to prevent leakage
     pinMode(EPD_SCK_PIN, INPUT);
@@ -1570,47 +1661,47 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       DeserializationError error = deserializeJson(doc, (char*)payload, length);
       if (!error) {
           // 1. Parse Date Info
-          if (doc.containsKey("date")) {
+          if (jsonHasKey(doc, "date")) {
               JsonObject dateObj = doc["date"];
-              if (dateObj.containsKey("solar")) solarDate = dateObj["solar"].as<String>();
-              if (dateObj.containsKey("week")) weekDay = dateObj["week"].as<String>();
-              if (dateObj.containsKey("lunar")) lunarDate = dateObj["lunar"].as<String>();
-              if (dateObj.containsKey("term")) termInfo = dateObj["term"].as<String>();
+              if (jsonHasKey(dateObj, "solar")) solarDate = dateObj["solar"].as<String>();
+              if (jsonHasKey(dateObj, "week")) weekDay = dateObj["week"].as<String>();
+              if (jsonHasKey(dateObj, "lunar")) lunarDate = dateObj["lunar"].as<String>();
+              if (jsonHasKey(dateObj, "term")) termInfo = dateObj["term"].as<String>();
               updateDatePending = true;
           }
           
           // 2. Parse Weather Info
-          if (doc.containsKey("weather")) {
+          if (jsonHasKey(doc, "weather")) {
               JsonArray forecastArr = doc["weather"].as<JsonArray>();
               int count = 0;
               for (JsonVariant v : forecastArr) {
                   if (count >= 7) break;
                   
-                  if (v.containsKey("temp")) currentForecast[count].temp = v["temp"].as<String>();
+                  if (jsonHasKey(v, "temp")) currentForecast[count].temp = v["temp"].as<String>();
                   
                   // Icon Day
-                  if (v.containsKey("icon")) currentForecast[count].icon_day = v["icon"].as<String>();
-                  else if (v.containsKey("iconDay")) currentForecast[count].icon_day = v["iconDay"].as<String>();
-                  else if (v.containsKey("icon_day")) currentForecast[count].icon_day = v["icon_day"].as<String>();
+                  if (jsonHasKey(v, "icon")) currentForecast[count].icon_day = v["icon"].as<String>();
+                  else if (jsonHasKey(v, "iconDay")) currentForecast[count].icon_day = v["iconDay"].as<String>();
+                  else if (jsonHasKey(v, "icon_day")) currentForecast[count].icon_day = v["icon_day"].as<String>();
                   
                   // Icon Night
-                  if (v.containsKey("iconNight")) currentForecast[count].icon_night = v["iconNight"].as<String>();
-                  else if (v.containsKey("icon_night")) currentForecast[count].icon_night = v["icon_night"].as<String>();
+                  if (jsonHasKey(v, "iconNight")) currentForecast[count].icon_night = v["iconNight"].as<String>();
+                  else if (jsonHasKey(v, "icon_night")) currentForecast[count].icon_night = v["icon_night"].as<String>();
 
                   // Condition Day
-                  if (v.containsKey("cond")) currentForecast[count].cond_day = v["cond"].as<String>();
-                  else if (v.containsKey("textDay")) currentForecast[count].cond_day = v["textDay"].as<String>();
-                  else if (v.containsKey("text")) currentForecast[count].cond_day = v["text"].as<String>();
-                  else if (v.containsKey("weather")) currentForecast[count].cond_day = v["weather"].as<String>();
+                  if (jsonHasKey(v, "cond")) currentForecast[count].cond_day = v["cond"].as<String>();
+                  else if (jsonHasKey(v, "textDay")) currentForecast[count].cond_day = v["textDay"].as<String>();
+                  else if (jsonHasKey(v, "text")) currentForecast[count].cond_day = v["text"].as<String>();
+                  else if (jsonHasKey(v, "weather")) currentForecast[count].cond_day = v["weather"].as<String>();
                   
                   // Condition Night
-                  if (v.containsKey("textNight")) currentForecast[count].cond_night = v["textNight"].as<String>();
-                  else if (v.containsKey("text_night")) currentForecast[count].cond_night = v["text_night"].as<String>();
-                  else if (v.containsKey("cond_night")) currentForecast[count].cond_night = v["cond_night"].as<String>();
+                  if (jsonHasKey(v, "textNight")) currentForecast[count].cond_night = v["textNight"].as<String>();
+                  else if (jsonHasKey(v, "text_night")) currentForecast[count].cond_night = v["text_night"].as<String>();
+                  else if (jsonHasKey(v, "cond_night")) currentForecast[count].cond_night = v["cond_night"].as<String>();
                   
-                  if (v.containsKey("windDir")) currentForecast[count].wind_dir = v["windDir"].as<String>();
-                  if (v.containsKey("windScale")) currentForecast[count].wind_sc = v["windScale"].as<String>();
-                  if (v.containsKey("date")) currentForecast[count].date = v["date"].as<String>();
+                  if (jsonHasKey(v, "windDir")) currentForecast[count].wind_dir = v["windDir"].as<String>();
+                  if (jsonHasKey(v, "windScale")) currentForecast[count].wind_sc = v["windScale"].as<String>();
+                  if (jsonHasKey(v, "date")) currentForecast[count].date = v["date"].as<String>();
                   
                   count++;
               }
@@ -1620,18 +1711,18 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           }
           
           // 3. Parse Indoor Environment
-          if (doc.containsKey("env")) {
+          if (jsonHasKey(doc, "env")) {
               JsonObject envObj = doc["env"];
-              if (envObj.containsKey("temp")) indoorTemp = envObj["temp"].as<String>();
-              if (envObj.containsKey("humi")) indoorHumi = envObj["humi"].as<String>();
+              if (jsonHasKey(envObj, "temp")) indoorTemp = envObj["temp"].as<String>();
+              if (jsonHasKey(envObj, "humi")) indoorHumi = envObj["humi"].as<String>();
               updateEnvPending = true;
           }
           
           // 4. Parse Air Quality
-          if (doc.containsKey("air")) {
+          if (jsonHasKey(doc, "air")) {
               JsonObject airObj = doc["air"];
-              if (airObj.containsKey("pm2p5")) airPm2p5 = airObj["pm2p5"].as<String>();
-              if (airObj.containsKey("category")) airCategory = airObj["category"].as<String>();
+              if (jsonHasKey(airObj, "pm2p5")) airPm2p5 = airObj["pm2p5"].as<String>();
+              if (jsonHasKey(airObj, "category")) airCategory = airObj["category"].as<String>();
               updateWeatherPending = true;
           }
           
@@ -1649,10 +1740,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       JsonDocument doc;
       DeserializationError error = deserializeJson(doc, (char*)payload, length);
       if (!error) {
-          if (doc.containsKey("阳历日期")) solarDate = doc["阳历日期"].as<String>();
-          if (doc.containsKey("星期")) weekDay = doc["星期"].as<String>();
-          if (doc.containsKey("农历日期")) lunarDate = doc["农历日期"].as<String>();
-          if (doc.containsKey("节气信息")) termInfo = doc["节气信息"].as<String>();
+          if (jsonHasKey(doc, "阳历日期")) solarDate = doc["阳历日期"].as<String>();
+          if (jsonHasKey(doc, "星期")) weekDay = doc["星期"].as<String>();
+          if (jsonHasKey(doc, "农历日期")) lunarDate = doc["农历日期"].as<String>();
+          if (jsonHasKey(doc, "节气信息")) termInfo = doc["节气信息"].as<String>();
           
           Serial.println("Date info updated");
           updateDatePending = true;
@@ -1670,8 +1761,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
             JsonDocument doc;
             DeserializationError error = deserializeJson(doc, (char*)payload, length);
             if (!error) {
-                if (doc.containsKey("temp")) indoorTemp = doc["temp"].as<String>();
-                if (doc.containsKey("humi")) indoorHumi = doc["humi"].as<String>();
+                if (jsonHasKey(doc, "temp")) indoorTemp = doc["temp"].as<String>();
+                if (jsonHasKey(doc, "humi")) indoorHumi = doc["humi"].as<String>();
                 
                 updateEnvPending = true;
                 lastUpdateTrigger = millis();
@@ -1687,8 +1778,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
              JsonDocument doc;
              DeserializationError error = deserializeJson(doc, payload, length);
              if (!error) {
-                 if (doc.containsKey("pm2p5")) airPm2p5 = doc["pm2p5"].as<String>();
-                 if (doc.containsKey("category")) airCategory = doc["category"].as<String>();
+                 if (jsonHasKey(doc, "pm2p5")) airPm2p5 = doc["pm2p5"].as<String>();
+                 if (jsonHasKey(doc, "category")) airCategory = doc["category"].as<String>();
                  updateWeatherPending = true; // Refresh weather page to show new air quality
                  lastUpdateTrigger = millis();
                  Serial.printf("Air Quality Updated: PM2.5=%s, Category=%s\n", airPm2p5.c_str(), airCategory.c_str());
@@ -1739,16 +1830,16 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                        if (v.is<JsonObject>()) {
                            JsonObject obj = v.as<JsonObject>();
                            String dateStr = "";
-                           if (obj.containsKey("date")) dateStr = obj["date"].as<String>();
-                           else if (obj.containsKey("day")) dateStr = obj["day"].as<String>();
+                           if (jsonHasKey(obj, "date")) dateStr = obj["date"].as<String>();
+                           else if (jsonHasKey(obj, "day")) dateStr = obj["day"].as<String>();
                            
                            if (dateStr.length() > 0) {
                                int year, month, day;
                                if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
                                    String content = "";
-                                   if (obj.containsKey("shift")) content = obj["shift"].as<String>();
-                                   else if (obj.containsKey("content")) content = obj["content"].as<String>();
-                                   else if (obj.containsKey("summary")) content = obj["summary"].as<String>();
+                                   if (jsonHasKey(obj, "shift")) content = obj["shift"].as<String>();
+                                   else if (jsonHasKey(obj, "content")) content = obj["content"].as<String>();
+                                   else if (jsonHasKey(obj, "summary")) content = obj["summary"].as<String>();
                                    
                                    if (content.length() > 0) addTempShift(year, month, day, content);
                                }
@@ -1793,32 +1884,32 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                }
                
                if (!foundDateKeys) {
-                   if (root.containsKey("date") || root.containsKey("day")) {
-                        String dateStr = root.containsKey("date") ? root["date"].as<String>() : root["day"].as<String>();
+                   if (jsonHasKey(root, "date") || jsonHasKey(root, "day")) {
+                        String dateStr = jsonHasKey(root, "date") ? root["date"].as<String>() : root["day"].as<String>();
                         int year, month, day;
                         if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
                             String content = "";
-                            if (root.containsKey("shift")) content = root["shift"].as<String>();
-                            else if (root.containsKey("content")) content = root["content"].as<String>();
+                            if (jsonHasKey(root, "shift")) content = root["shift"].as<String>();
+                            else if (jsonHasKey(root, "content")) content = root["content"].as<String>();
                             if (content.length() > 0) addTempShift(year, month, day, content);
                         }
                    }
                    else {
                        JsonArray shifts;
-                       if (root.containsKey("shifts")) shifts = root["shifts"];
-                       else if (root.containsKey("data")) shifts = root["data"];
+                       if (jsonHasKey(root, "shifts")) shifts = root["shifts"];
+                       else if (jsonHasKey(root, "data")) shifts = root["data"];
                        
                        if (!shifts.isNull()) {
                            for (JsonVariant v : shifts) {
                                if (v.is<JsonObject>()) {
                                    JsonObject obj = v.as<JsonObject>();
                                    String dateStr = "";
-                                   if (obj.containsKey("date")) dateStr = obj["date"].as<String>();
+                                   if (jsonHasKey(obj, "date")) dateStr = obj["date"].as<String>();
                                    
                                    int year, month, day;
                                    if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
                                        String content = "";
-                                       if (obj.containsKey("shift")) content = obj["shift"].as<String>();
+                                       if (jsonHasKey(obj, "shift")) content = obj["shift"].as<String>();
                                        if (content.length() > 0) addTempShift(year, month, day, content);
                                    }
                                }
@@ -1900,13 +1991,13 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           // We need to find the events array. It might be nested or direct.
           
           JsonArray events;
-          if (doc.containsKey("events")) {
+          if (jsonHasKey(doc, "events")) {
               events = doc["events"];
           } else {
               // Iterate through keys to find one that contains "events"
               JsonObject root = doc.as<JsonObject>();
               for (JsonPair kv : root) {
-                   if (kv.value().is<JsonObject>() && kv.value().as<JsonObject>().containsKey("events")) {
+                   if (kv.value().is<JsonObject>() && jsonHasKey(kv.value().as<JsonObject>(), "events")) {
                        events = kv.value()["events"];
                        break;
                    }
@@ -2024,7 +2115,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       JsonDocument f;
       JsonObject p = f.to<JsonObject>();
       // Define the element filter
-      JsonObject e = p.createNestedObject("e"); // Temporary object to hold element filter
+      JsonObject e = p["e"].to<JsonObject>(); // Temporary object to hold element filter
       e["fxDate"] = true; e["date"] = true; e["日期"] = true;
       e["tempMax"] = true; e["tempMin"] = true; e["temp"] = true; e["最高温"] = true; e["最低温"] = true;
       e["textDay"] = true; e["textNight"] = true; e["白天天气"] = true; e["夜晚天气"] = true; e["天气"] = true; e["weather"] = true;
@@ -2053,42 +2144,42 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                   if (count >= 7) break;
                   
                   // Mapping new JSON format keys
-                  if (v.containsKey("fxDate")) currentForecast[count].date = v["fxDate"].as<String>();
-                  else if (v.containsKey("日期")) currentForecast[count].date = v["日期"].as<String>();
-                  else if (v.containsKey("date")) currentForecast[count].date = v["date"].as<String>();
+                  if (jsonHasKey(v, "fxDate")) currentForecast[count].date = v["fxDate"].as<String>();
+                  else if (jsonHasKey(v, "日期")) currentForecast[count].date = v["日期"].as<String>();
+                  else if (jsonHasKey(v, "date")) currentForecast[count].date = v["date"].as<String>();
                   
                   // Temp: High/Low range
-                  if (v.containsKey("tempMax") && v.containsKey("tempMin")) {
+                  if (jsonHasKey(v, "tempMax") && jsonHasKey(v, "tempMin")) {
                       currentForecast[count].temp = v["tempMax"].as<String>() + "/" + v["tempMin"].as<String>();
-                  } else if (v.containsKey("最高温") && v.containsKey("最低温")) {
+                  } else if (jsonHasKey(v, "最高温") && jsonHasKey(v, "最低温")) {
                       currentForecast[count].temp = v["最高温"].as<String>() + "/" + v["最低温"].as<String>();
-                  } else if (v.containsKey("temp")) {
+                  } else if (jsonHasKey(v, "temp")) {
                       currentForecast[count].temp = v["temp"].as<String>();
                   }
                   
                   // Condition Day
-                  if (v.containsKey("textDay")) currentForecast[count].cond_day = v["textDay"].as<String>();
-                  else if (v.containsKey("白天天气")) currentForecast[count].cond_day = v["白天天气"].as<String>();
-                  else if (v.containsKey("天气")) currentForecast[count].cond_day = v["天气"].as<String>();
-                  else if (v.containsKey("weather")) currentForecast[count].cond_day = v["weather"].as<String>();
+                  if (jsonHasKey(v, "textDay")) currentForecast[count].cond_day = v["textDay"].as<String>();
+                  else if (jsonHasKey(v, "白天天气")) currentForecast[count].cond_day = v["白天天气"].as<String>();
+                  else if (jsonHasKey(v, "天气")) currentForecast[count].cond_day = v["天气"].as<String>();
+                  else if (jsonHasKey(v, "weather")) currentForecast[count].cond_day = v["weather"].as<String>();
                   
                   // Condition Night
-                  if (v.containsKey("textNight")) currentForecast[count].cond_night = v["textNight"].as<String>();
-                  else if (v.containsKey("夜晚天气")) currentForecast[count].cond_night = v["夜晚天气"].as<String>();
+                  if (jsonHasKey(v, "textNight")) currentForecast[count].cond_night = v["textNight"].as<String>();
+                  else if (jsonHasKey(v, "夜晚天气")) currentForecast[count].cond_night = v["夜晚天气"].as<String>();
 
                   // Icons
-                  if (v.containsKey("iconDay")) currentForecast[count].icon_day = v["iconDay"].as<String>();
-                  if (v.containsKey("iconNight")) currentForecast[count].icon_night = v["iconNight"].as<String>();
+                  if (jsonHasKey(v, "iconDay")) currentForecast[count].icon_day = v["iconDay"].as<String>();
+                  if (jsonHasKey(v, "iconNight")) currentForecast[count].icon_night = v["iconNight"].as<String>();
                   
                   // Wind
-                  if (v.containsKey("windDirDay")) currentForecast[count].wind_dir = v["windDirDay"].as<String>();
-                  else if (v.containsKey("windDir")) currentForecast[count].wind_dir = v["windDir"].as<String>();
-                  else if (v.containsKey("风向")) currentForecast[count].wind_dir = v["风向"].as<String>();
+                  if (jsonHasKey(v, "windDirDay")) currentForecast[count].wind_dir = v["windDirDay"].as<String>();
+                  else if (jsonHasKey(v, "windDir")) currentForecast[count].wind_dir = v["windDir"].as<String>();
+                  else if (jsonHasKey(v, "风向")) currentForecast[count].wind_dir = v["风向"].as<String>();
                   
-                  if (v.containsKey("windScaleDay")) currentForecast[count].wind_sc = v["windScaleDay"].as<String>();
-                  else if (v.containsKey("windScale")) currentForecast[count].wind_sc = v["windScale"].as<String>();
-                  else if (v.containsKey("windSpeedDay")) currentForecast[count].wind_sc = v["windSpeedDay"].as<String>();
-                  else if (v.containsKey("风速")) currentForecast[count].wind_sc = v["风速"].as<String>();
+                  if (jsonHasKey(v, "windScaleDay")) currentForecast[count].wind_sc = v["windScaleDay"].as<String>();
+                  else if (jsonHasKey(v, "windScale")) currentForecast[count].wind_sc = v["windScale"].as<String>();
+                  else if (jsonHasKey(v, "windSpeedDay")) currentForecast[count].wind_sc = v["windSpeedDay"].as<String>();
+                  else if (jsonHasKey(v, "风速")) currentForecast[count].wind_sc = v["风速"].as<String>();
                   
                   if (currentForecast[count].date.length() > 0) {
                       count++;
@@ -2106,14 +2197,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
                   for(JsonVariant v : data) {
                       if (count >= 7) break;
                       
-                      if (v.containsKey("date")) currentForecast[count].date = v["date"].as<String>();
-                      else if (v.containsKey("day")) currentForecast[count].date = v["day"].as<String>();
+                      if (jsonHasKey(v, "date")) currentForecast[count].date = v["date"].as<String>();
+                      else if (jsonHasKey(v, "day")) currentForecast[count].date = v["day"].as<String>();
                       
-                      if (v.containsKey("temp")) currentForecast[count].temp = v["temp"].as<String>();
-                      else if (v.containsKey("high")) currentForecast[count].temp = v["high"].as<String>();
+                      if (jsonHasKey(v, "temp")) currentForecast[count].temp = v["temp"].as<String>();
+                      else if (jsonHasKey(v, "high")) currentForecast[count].temp = v["high"].as<String>();
                       
-                      if (v.containsKey("weather")) currentForecast[count].cond_day = v["weather"].as<String>();
-                      else if (v.containsKey("text")) currentForecast[count].cond_day = v["text"].as<String>();
+                      if (jsonHasKey(v, "weather")) currentForecast[count].cond_day = v["weather"].as<String>();
+                      else if (jsonHasKey(v, "text")) currentForecast[count].cond_day = v["text"].as<String>();
                       
                       if (currentForecast[count].date.length() > 0) count++;
                   }

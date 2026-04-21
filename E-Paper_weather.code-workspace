@@ -1,0 +1,30 @@
+{
+  "folders": [
+    {
+      "name": "ProjectRoot",
+      "path": "."
+    },
+    {
+      "name": "Firmware",
+      "path": "e_weather"
+    },
+    {
+      "name": "IconTools",
+      "path": "tools/icons"
+    }
+  ],
+  "settings": {
+    "files.associations": {
+      "*.ino": "cpp"
+    },
+    "terminal.integrated.cwd": "${workspaceFolder:ProjectRoot}",
+    "files.exclude": {
+      "**/.pio": true,
+      "**/build": true,
+      "**/backups": true,
+      "**/__pycache__": true,
+      "tmp_*.py": true,
+      "src": true
+    }
+  }
+}

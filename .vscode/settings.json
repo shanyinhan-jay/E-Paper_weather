@@ -1,0 +1,36 @@
+{
+  "files.associations": {
+    "*.ino": "cpp"
+  },
+  "C_Cpp.default.configurationProvider": "ms-vscode.cpptools",
+  "C_Cpp.default.cppStandard": "c++17",
+  "C_Cpp.default.intelliSenseMode": "windows-gcc-x64",
+  "C_Cpp.default.defines": [
+    "ARDUINO=10819",
+    "ESP32"
+  ],
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/e_weather",
+    "${workspaceFolder}/e_weather/icon",
+    "${workspaceFolder}/e_weather/utility",
+    "${workspaceFolder}/src",
+    "${workspaceFolder}/src/utility"
+  ],
+  "editor.formatOnSave": false,
+  "terminal.integrated.cwd": "${workspaceFolder}",
+  "platformio-ide.defaultEnv": "esp32dev",
+  "files.exclude": {
+    "**/.pio": true,
+    "**/build": true,
+    "**/backups": true,
+    "**/__pycache__": true,
+    "tmp_*.py": true,
+    "src": true
+  },
+  "search.exclude": {
+    "**/.pio/**": true,
+    "**/build/**": true,
+    "**/backups/**": true,
+    "**/__pycache__/**": true
+  }
+}
