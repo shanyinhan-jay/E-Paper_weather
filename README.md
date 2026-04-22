@@ -101,6 +101,35 @@
 - 依赖库: `Adafruit GFX`, `U8g2_for_Adafruit_GFX`, `ArduinoJson`, `LittleFS` 等。
 - 确保分区表选择支持 LittleFS 的方案（如 `min_spiffs` 或自定义分区）。
 
+### PlatformIO 使用
+- 已提供 [platformio.ini](file:///d:/ink/E-Paper_weather/platformio.ini)，默认环境为 `esp32dev`，分区为 `huge_app.csv`。
+- 构建：
+
+```bash
+- 双驱动并可在 UI 切换： pio run -e esp32dev -j1
+- 仅 Local： pio run -e esp32dev_local -j1
+- 仅 Gx： pio run -e esp32dev_gx -j1
+```
+
+- 上传（示例端口）：
+
+```bash
+pio run -e esp32dev -t upload --upload-port COM5
+```
+
+- 驱动编译模式：
+  - `esp32dev`：同时编译 `Local_EPD_4IN2 + GxEPD2_2IC`，可在 Web UI 中切换驱动。
+  - `esp32dev_local`：仅编译 `Local_EPD_4IN2`（固件更精简）。
+  - `esp32dev_gx`：仅编译 `GxEPD2_2IC`。
+
+### 推荐查看目录
+- `e_weather/`：固件主代码（重点目录）。
+- `tools/icons/`：图标自动化脚本与契约清单。
+- `.vscode/`：VSCode 任务与工作区设置。
+- `.pio/`、`build/`、`backups/`：构建或备份产物，日常可在资源管理器隐藏。
+- `src/`：历史兼容目录，当前主流程不依赖。
+- `archive/`：已归档的历史杂项文件（不参与当前主流程）。
+
 ## 🎨 图标资源自动化
 - 图标目录：
   - `e_weather/icon/7272`（主天气 72x72）

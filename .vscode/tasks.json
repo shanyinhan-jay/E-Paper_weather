@@ -1,0 +1,100 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Icons: Generate",
+      "type": "shell",
+      "command": "python tools/icons/gen_all_icons.py --project-root ${workspaceFolder}",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Icons: Generate + Compile",
+      "type": "shell",
+      "command": "python tools/icons/gen_all_icons.py --project-root ${workspaceFolder} --compile",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: Arduino CLI",
+      "type": "shell",
+      "command": "arduino-cli compile --fqbn esp32:esp32:esp32:PartitionScheme=huge_app --output-dir ./build ./e_weather/e_weather.ino",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: PlatformIO",
+      "type": "shell",
+      "command": "pio run -e esp32dev -j1",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: PlatformIO (Local Driver Only)",
+      "type": "shell",
+      "command": "pio run -e esp32dev_local -j1",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build: PlatformIO (GxEPD2 Driver Only)",
+      "type": "shell",
+      "command": "pio run -e esp32dev_gx -j1",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Upload: PlatformIO",
+      "type": "shell",
+      "command": "pio run -e esp32dev -j1 -t upload --upload-port ${input:serialPort}",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Monitor: PlatformIO",
+      "type": "shell",
+      "command": "pio device monitor --port ${input:serialPort} --baud 115200",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean: PlatformIO",
+      "type": "shell",
+      "command": "pio run -e esp32dev -t clean",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Clean: Arduino Build",
+      "type": "shell",
+      "command": "if (Test-Path ./build) { Remove-Item -Recurse -Force ./build }",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Upload: Arduino CLI",
+      "type": "shell",
+      "command": "arduino-cli upload -p ${input:serialPort} --fqbn esp32:esp32:esp32:PartitionScheme=huge_app ./e_weather/e_weather.ino",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Monitor: Arduino CLI",
+      "type": "shell",
+      "command": "arduino-cli monitor -p ${input:serialPort} -c baudrate=115200",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "serialPort",
+      "type": "promptString",
+      "description": "输入串口号（例如 COM5）",
+      "default": "COM5"
+    }
+  ]
+}
