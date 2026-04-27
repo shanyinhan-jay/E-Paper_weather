@@ -3,6 +3,7 @@
 - SCK : 13
 - MOSI : 14
 - CS : 15
+- CS1 : 23 (GxEPD2_2IC only)
 - RST : 26
 - DC : 27
 - BUSY : 25
@@ -42,6 +43,7 @@
 #include <ArduinoOTA.h>
 
 #include <Adafruit_GFX.h>
+#include <SPI.h>
 #include <U8g2_for_Adafruit_GFX.h>
 #include <OneButton.h>
 #include <vector>
@@ -94,7 +96,7 @@ enum DisplayDriverType : uint8_t {
 #if ENABLE_DRIVER_GX2IC
 // Use the same GPIO mapping as Local_EPD_4IN2 for consistent wiring.
 GxEPD2_2IC_BW<GxEPD2_2IC_420_A03, GxEPD2_2IC_420_A03::HEIGHT> gxDisplay(
-    GxEPD2_2IC_420_A03(EPD_CS_PIN, EPD_SCK_PIN, EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN)
+    GxEPD2_2IC_420_A03(EPD_CS_PIN, EPD_CS1_PIN, EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN)
 );
 #endif
 
@@ -304,8 +306,9 @@ static void epdFlushFrame(bool partial_update, UBYTE* image) {
     }
 
 #if ENABLE_DRIVER_GX2IC
-    // GxEPD2 path currently uses full refresh for stability across panel variants.
-    gxDisplay.init(0);
+    // GxEPD2 uses hardware SPI, so bind it to the same wiring used by the local driver.
+    SPI.begin(EPD_SCK_PIN, -1, EPD_MOSI_PIN, EPD_CS_PIN);
+    gxDisplay.init(0, true, 10, false, SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
     gxDisplay.setRotation(0);
     gxDisplay.drawImage(image, 0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, false, false, false);
 #endif
@@ -1390,6 +1393,10 @@ void hibernateEPD() {
     pinMode(EPD_SCK_PIN, INPUT);
     pinMode(EPD_MOSI_PIN, INPUT);
     pinMode(EPD_CS_PIN, INPUT);
+#if ENABLE_DRIVER_GX2IC
+    pinMode(EPD_CS1_PIN, INPUT);
+    SPI.end();
+#endif
     pinMode(EPD_RST_PIN, INPUT);
     pinMode(EPD_DC_PIN, INPUT);
     pinMode(EPD_BUSY_PIN, INPUT);
