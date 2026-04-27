@@ -191,7 +191,6 @@ parameter:
 void Local_EPD_4IN2_ReadBusy(void)
 {
     Debug("e-Paper busy\r\n");
-    s_local_epd_busy_timeout = false;
 	EPD_4IN2_SendCommand(0x71);
     unsigned long start = millis();
     while(DEV_Digital_Read(EPD_BUSY_PIN) == 0) {      //LOW: idle, HIGH: busy
