@@ -17,9 +17,6 @@ extern float getBatteryVoltage();
 extern void displayMessage(String text);
 extern void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight);
 extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
-extern void displayCalendarPage(bool partial_update);
-extern bool switchPagePending;
-extern Page currentPage;
 
 // Common CSS for all pages
 const char COMMON_CSS[] PROGMEM = R"css(
@@ -174,21 +171,11 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
 
     <div class="card">
       <h2>Display Control</h2>
-      <form action='/setPage' method='POST'>
-        <h3>Page Selection</h3>
-        <div class="btn-group">
-          <button type='submit' name='page' value='weather'>Weather Dashboard</button>
-          <button type='submit' name='page' value='calendar'>Calendar View</button>
-        </div>
+      <form action='/setText' method='POST'>
+        <h3>Direct Text</h3>
+        <input type='text' name='text' placeholder='Enter text to display...'>
+        <input type='submit' value='Display Text'>
       </form>
-      
-      <div style="margin-top: 20px;">
-        <form action='/setText' method='POST'>
-          <h3>Direct Text</h3>
-          <input type='text' name='text' placeholder='Enter text to display...'>
-          <input type='submit' value='Display Text'>
-        </form>
-      </div>
     </div>
     
     <div class="card">
@@ -421,9 +408,6 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
         <h3>Air Quality Topic</h3>
         <input type='text' name='mqtt_air_quality_topic' value='%MQTT_AQI%' placeholder="epd/air_quality">
 
-        <h3>Calendar Events Topic</h3>
-        <input type='text' name='mqtt_calendar_topic' value='%MQTT_CALENDAR%' placeholder="epd/calendar">
-
         <h3>Shift Schedule Topic</h3>
         <input type='text' name='mqtt_shift_topic' value='%MQTT_SHIFT%' placeholder="epd/shift">
 
@@ -456,7 +440,6 @@ void handleUpload();
 void handleDelete();
 void handleReboot();
 void handleSaveConfig();
-void handleSetPage();
 void handleSetText();
 void handleUpdate();
 void handleUpdateFirmware();

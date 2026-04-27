@@ -13,7 +13,6 @@ struct Config {
   char mqtt_weather_topic[64] = "shanyinhan/epd/weather";
   char mqtt_date_topic[64] = "shanyinhan/epd/date";
   char mqtt_env_topic[64] = "shanyinhan/epd/env";
-  char mqtt_calendar_topic[64] = "shanyinhan/epd/calendar";
   char mqtt_shift_topic[64] = "shanyinhan/epd/shift";
   char mqtt_air_quality_topic[64] = "shanyinhan/epd/air_quality";
   char mqtt_battery_topic[64] = "shanyinhan/epd/battery";
@@ -43,11 +42,6 @@ struct Config {
   char static_gw[16] = "";
   char static_mask[16] = "255.255.255.0";
   char static_dns[16] = "114.114.114.114";
-};
-
-enum Page {
-    PAGE_WEATHER,
-    PAGE_CALENDAR
 };
 
 #endif

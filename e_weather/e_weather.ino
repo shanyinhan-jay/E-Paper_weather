@@ -82,7 +82,6 @@ OneButton button(BUTTON_PIN, true); // GPIO defined in DEV_Config.h, Active Low
 const char* DEFAULT_AP_SSID_BASE = "EPD-Display";
 String ap_ssid = DEFAULT_AP_SSID_BASE;
 
-#define MAX_CALENDAR_EVENTS 20
 #define MAX_SHIFT_EVENTS 100
 
 Config config;
@@ -98,11 +97,6 @@ GxEPD2_2IC_BW<GxEPD2_2IC_420_A03, GxEPD2_2IC_420_A03::HEIGHT> gxDisplay(
     GxEPD2_2IC_420_A03(EPD_CS_PIN, EPD_SCK_PIN, EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN)
 );
 #endif
-
-struct CalendarEvent {
-    time_t start_time;
-    String summary;
-};
 
 struct ShiftEvent {
     int year;
@@ -123,7 +117,6 @@ struct WeatherData {
 };
 
 // Global Weather Data
-std::vector<CalendarEvent> calendarEvents;
 std::vector<ShiftEvent> shiftEvents;
 WeatherData currentForecast[7];
 int currentForecastCount = 0;
@@ -140,15 +133,11 @@ int lastMinute = -1;
 
 // Flags for deferred display update
 bool updateWeatherPending = false;
-bool updateCalendarPending = false;
 bool updateEnvPending = false;
 bool updateDatePending = false;
 bool fullRefreshPending = false; // Flag for full refresh instead of partial
 unsigned long lastUpdateTrigger = 0;
 const unsigned long UPDATE_DELAY_MS = 200; // Wait 200ms after last message to update (debounce)
-
-Page currentPage = PAGE_WEATHER;
-bool switchPagePending = false;
 
 // Battery Mode & Deep Sleep Globals
 bool refreshDone = false;
@@ -346,7 +335,6 @@ void loadConfig() {
           strlcpy(config.mqtt_weather_topic, doc["mqtt_weather_topic"] | "epd/weather", sizeof(config.mqtt_weather_topic));
           strlcpy(config.mqtt_date_topic, doc["mqtt_date_topic"] | "epd/date", sizeof(config.mqtt_date_topic));
           strlcpy(config.mqtt_env_topic, doc["mqtt_env_topic"] | "epd/env", sizeof(config.mqtt_env_topic));
-          strlcpy(config.mqtt_calendar_topic, doc["mqtt_calendar_topic"] | "epd/calendar", sizeof(config.mqtt_calendar_topic));
           strlcpy(config.mqtt_shift_topic, doc["mqtt_shift_topic"] | "epd/shift", sizeof(config.mqtt_shift_topic));
           strlcpy(config.mqtt_air_quality_topic, doc["mqtt_air_quality_topic"] | "epd/air_quality", sizeof(config.mqtt_air_quality_topic));
           strlcpy(config.mqtt_battery_topic, doc["mqtt_battery_topic"] | "shanyinhan/epd/battery", sizeof(config.mqtt_battery_topic));
@@ -406,7 +394,6 @@ void saveConfig() {
   doc["mqtt_weather_topic"] = config.mqtt_weather_topic;
   doc["mqtt_date_topic"] = config.mqtt_date_topic;
   doc["mqtt_env_topic"] = config.mqtt_env_topic;
-  doc["mqtt_calendar_topic"] = config.mqtt_calendar_topic;
   doc["mqtt_shift_topic"] = config.mqtt_shift_topic;
   doc["mqtt_air_quality_topic"] = config.mqtt_air_quality_topic;
   doc["mqtt_battery_topic"] = config.mqtt_battery_topic;
@@ -664,200 +651,6 @@ void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitm
 
 void displayMessage(String text) {
     displayMessageWithBitmap(text, nullptr, 0, 0);
-}
-
-void displayCalendarPage(bool partial_update = false) {
-    Serial.println("Displaying Calendar Page...");
-    Serial.print("Shift Events count: ");
-    Serial.println(shiftEvents.size());
-
-    DEV_Module_Init();
-    
-    if (BlackImage == NULL) {
-         Serial.println("Error: BlackImage is NULL (Should be allocated in setup)");
-         // Try emergency alloc
-         UWORD Imagesize = ((EPD_4IN2_WIDTH % 8 == 0) ? (EPD_4IN2_WIDTH / 8 ) : (EPD_4IN2_WIDTH / 8 + 1)) * EPD_4IN2_HEIGHT;
-         BlackImage = (UBYTE *)malloc(Imagesize);
-         if (BlackImage == NULL) Serial.println("BlackImage Malloc Failed (Calendar)");
-    }
-    
-    if (BlackImage != NULL) {
-        UWORD InitColor = config.invert_display ? BLACK : WHITE;
-        Paint_NewImage(BlackImage, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, 0, InitColor);
-        Paint_SelectImage(BlackImage);
-        Paint_Clear(InitColor);
-        
-        u8g2.begin(paint_gfx);
-        u8g2.setFontMode(1); 
-        u8g2.setForegroundColor(1);
-        u8g2.setBackgroundColor(0);
-        
-        // Title removed as per request
-        // u8g2.setFont(u8g2_font_wqy16_t_gb2312);
-        // u8g2.drawUTF8(10, 20, "两周日历 (Two Weeks)");
-        // paint_gfx.drawFastHLine(0, 25, EPD_4IN2_WIDTH, 2);
-
-        // Grid Settings
-        int cols = 7;
-        int rows = 2;
-        int cellW = EPD_4IN2_WIDTH / cols;
-        int cellH = EPD_4IN2_HEIGHT / rows; // Use full height since title is gone
-        int startY = 0; // Start from top
-
-        time_t now = timeClient.getEpochTime();
-        const char* weekDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-
-        for (int i = 0; i < 14; i++) {
-            time_t future = now + i * 86400;
-            struct tm * t = gmtime(&future);
-            
-            int c = i % cols;
-            int r = i / cols;
-            
-            int x = c * cellW;
-             int y = startY + r * cellH;
-             
-             // Save "t" (current cell date) to local vars immediately because gmtime returns static pointer
-             // which will be overwritten by other gmtime calls (e.g. inside event loop)
-             int t_year = t->tm_year;
-             int t_mon = t->tm_mon;
-             int t_mday = t->tm_mday;
-             int t_wday = t->tm_wday;
-             
-             // Draw Cell Border
-            // paint_gfx.drawRect(x, y, cellW, cellH, 1);
-            paint_gfx.drawFastHLine(x, y, cellW, 1);
-            paint_gfx.drawFastHLine(x, y + cellH - 1, cellW, 1);
-            paint_gfx.drawFastVLine(x, y, cellH, 1);
-            paint_gfx.drawFastVLine(x + cellW - 1, y, cellH, 1);
-            
-            // Highlight Weekend
-            // If it's Saturday (6) or Sunday (0), use black background for header
-            if (t_wday == 0 || t_wday == 6) {
-                 for(int k=0; k<20; k++) {
-                     paint_gfx.drawFastHLine(x, y + k, cellW, 1);
-                 }
-                 u8g2.setForegroundColor(0); // White text
-                 u8g2.setBackgroundColor(1);
-            } else {
-                 u8g2.setForegroundColor(1); // Black text
-                 u8g2.setBackgroundColor(0);
-            }
-
-            // Draw Weekday
-            u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-            String wdayStr = weekDays[t_wday];
-            int wW = u8g2.getUTF8Width(wdayStr.c_str());
-            u8g2.drawUTF8(x + (cellW - wW)/2, y + 14, wdayStr.c_str());
-            
-            // Draw horizontal line below weekday (header separator)
-            paint_gfx.drawFastHLine(x, y + 20, cellW, 1);
-
-            // Reset Color for Date
-            u8g2.setForegroundColor(1);
-            u8g2.setBackgroundColor(0);
-            
-            // Draw Date
-            u8g2.setFont(u8g2_font_logisoso30_tf);
-            String dateStr = String(t_mday);
-            int dW = u8g2.getUTF8Width(dateStr.c_str());
-           // Center date vertically in the remaining space below header
-            // Header height is 20. Cell Height is ~85. Remaining is 65.
-            // Move date up to avoid overlap with events
-            u8g2.drawUTF8(x + (cellW - dW)/2, y + 60, dateStr.c_str());
-
-            // Draw Event Marker or Summary (if any)
-            // Check for Shift
-            bool hasShift = false;
-            String shiftText = "";
-            for (const auto& sev : shiftEvents) {
-                 if (sev.year == (t_year + 1900) && sev.month == (t_mon + 1) && sev.day == t_mday) {
-                     hasShift = true;
-                     shiftText = sev.content;
-                     break;
-                 }
-            }
-            
-            // Check for Event
-            bool hasEvent = false;
-            CalendarEvent targetEvent;
-            for (const auto& ev : calendarEvents) {
-                 struct tm* evTm = gmtime(&ev.start_time);
-                 if (evTm->tm_year == t_year && evTm->tm_mon == t_mon && evTm->tm_mday == t_mday) {
-                     hasEvent = true;
-                     targetEvent = ev;
-                     break;
-                 }
-            }
-
-            if (hasShift || hasEvent) {
-                 // Draw separator line between date and content
-                 int sepMargin = 5;
-                 paint_gfx.drawFastHLine(x + sepMargin, y + 70, cellW - (2 * sepMargin), 1);
-            }
-
-            if (hasShift) {
-                 u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-                 int sW = u8g2.getUTF8Width(shiftText.c_str());
-                 // Draw centered below separator (y+70)
-                 // Text baseline at y+86 (approx 16px height)
-                 u8g2.drawUTF8(x + (cellW - sW)/2, y + 86, shiftText.c_str());
-            }
-
-            if (hasEvent) {
-                 // Found event for this day
-                 // Draw summary with word wrap (4 chars per line, max 5 lines)
-                  u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-                  String sum = targetEvent.summary;
-                  
-                  int lineHeight = 14;
-                  int maxLines = 5;
-                  int charsPerLine = 4;
-                  int currentLine = 0;
-                  // Start below Shift area. Shift ends at ~88. 
-                  // If Shift exists, start at 105. If not, could start earlier but consistent alignment is better.
-                  // User said "Event starts from line below Shift".
-                  // Let's use y+100 as base.
-                  int startY_Text = y + 100;
-                  
-                  int k = 0;
-                  while (k < sum.length() && currentLine < maxLines) {
-                       String lineStr = "";
-                       int charsInThisLine = 0;
-                       
-                       // Collect chars for this line
-                       while (k < sum.length() && charsInThisLine < charsPerLine) {
-                           int charLen = 1;
-                           unsigned char c = sum[k];
-                           if (c >= 0xC0) charLen = 2;
-                           if (c >= 0xE0) charLen = 3;
-                           if (c >= 0xF0) charLen = 4;
-                           
-                           lineStr += sum.substring(k, k + charLen);
-                           k += charLen;
-                           charsInThisLine++;
-                       }
-                       
-                       // Check if we need to truncate (if this is the last allowed line and there is more text)
-                       if (currentLine == maxLines - 1 && k < sum.length()) {
-                           // Force draw ".." on next line to indicate more content
-                           u8g2.drawUTF8(x + (cellW - u8g2.getUTF8Width(".."))/2, startY_Text + (currentLine + 1) * lineHeight, "..");
-                       }
-                       
-                       // Draw this line centered
-                       int sW = u8g2.getUTF8Width(lineStr.c_str());
-                       u8g2.drawUTF8(x + (cellW - sW)/2, startY_Text + currentLine * lineHeight, lineStr.c_str());
-                       currentLine++;
-                   }
-            }
-         }
-
-        epdFlushFrame(partial_update, BlackImage);
-        hibernateEPD();
-        
-        // free(BlackImage); // Keep allocated
-        // BlackImage = NULL;
-    }
 }
 
 char getIconChar(String cond) {
@@ -1161,31 +954,6 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             int timeX = 100 - (tWidth / 2);
             u8g2.drawUTF8(timeX, 65, timeStr.c_str());
             
-            // Check for today's event and draw bell icon
-            // Only trigger for Calendar Events (Schedule), NOT Shifts
-            time_t now = timeClient.getEpochTime();
-            struct tm *t_now = gmtime(&now);
-            int today_year = t_now->tm_year;
-            int today_mon = t_now->tm_mon;
-            int today_mday = t_now->tm_mday;
-            
-            bool hasEvent = false;
-            for (const auto& ev : calendarEvents) {
-                // Note: Must save today's date first because gmtime uses static buffer!
-                // We already saved today_year/mon/mday above.
-                struct tm *evTm = gmtime(&ev.start_time);
-                if (evTm->tm_year == today_year && 
-                    evTm->tm_mon == today_mon && 
-                    evTm->tm_mday == today_mday) {
-                    hasEvent = true;
-                    break;
-                }
-            }
-            
-            if (hasEvent) {
-                  drawIconFromProgmem(getOtherIconData("bell"), timeX - 27, 31, 20, 20);
-             }
-            
             if (solarDate.length() > 0) {
                 u8g2.setFont(u8g2_font_wqy12_t_gb2312);
                 String fullDate = solarDate;
@@ -1206,32 +974,11 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             time_t now = timeClient.getEpochTime();
             struct tm *t_now = gmtime(&now);
             
-            // Check for today's event and draw bell icon
-            int today_year = t_now->tm_year;
-            int today_mon = t_now->tm_mon;
-            int today_mday = t_now->tm_mday;
-            
-            bool hasEvent = false;
-            for (const auto& ev : calendarEvents) {
-                struct tm *evTm = gmtime(&ev.start_time);
-                if (evTm->tm_year == today_year && 
-                    evTm->tm_mon == today_mon && 
-                    evTm->tm_mday == today_mday) {
-                    hasEvent = true;
-                    break;
-                }
-            }
-            
             int boxW = 150;
             int boxH = 68;
             int boxX = 100 - (boxW / 2);
             int boxY = 5; // Moved box up (was 15)
             int cornerR = 10; // ~2mm
-
-            if (hasEvent) {
-                // Draw bell icon to the left of the box
-                drawIconFromProgmem(getOtherIconData("bell"), boxX - 23, boxY + 15, 20, 20);
-            }
 
             // Draw stylized box with a single outer border and split colors
             // 1. Fill entire box background with white (for the right half)
@@ -1963,7 +1710,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           Serial.print("Total shifts stored: ");
           Serial.println(shiftEvents.size());
           
-          updateCalendarPending = true;
+          updateWeatherPending = true;
           lastUpdateTrigger = millis();
       } else {
           Serial.print("JSON Error (Shift): ");
@@ -1972,114 +1719,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       return;
   }
 
-  if (strcmp(topic, config.mqtt_calendar_topic) == 0) {
-      Serial.println("Calendar updated");
-
-      JsonDocument doc;
-      // Filter to reduce memory usage
-      JsonDocument filter;
-      filter["events"][0]["start"] = true;
-      filter["events"][0]["summary"] = true;
-      // Support 1 level nesting
-      filter["*"]["events"][0]["start"] = true;
-      filter["*"]["events"][0]["summary"] = true;
-      
-      DeserializationError error = deserializeJson(doc, (char*)payload, length, DeserializationOption::Filter(filter));
-      if (!error) {
-          calendarEvents.clear();
-          // The structure is {"calendar.my_calendar":{"events":[...]}}
-          // We need to find the events array. It might be nested or direct.
-          
-          JsonArray events;
-          if (jsonHasKey(doc, "events")) {
-              events = doc["events"];
-          } else {
-              // Iterate through keys to find one that contains "events"
-              JsonObject root = doc.as<JsonObject>();
-              for (JsonPair kv : root) {
-                   if (kv.value().is<JsonObject>() && jsonHasKey(kv.value().as<JsonObject>(), "events")) {
-                       events = kv.value()["events"];
-                       break;
-                   }
-              }
-          }
-
-          if (!events.isNull()) {
-              for (JsonVariant v : events) {
-                  if (calendarEvents.size() >= MAX_CALENDAR_EVENTS) break; // Limit events
-
-                  CalendarEvent ev;
-                  // Handle "start" time string: "2026-02-15T23:00:00+08:00"
-                  String startStr = v["start"].as<String>();
-                  // Simple parsing for now (assuming fixed format or using library if available)
-                  // For this demo, let's parse basic components
-                  // 2026-02-15T23:00:00+08:00
-                  int year = startStr.substring(0, 4).toInt();
-                  int month = startStr.substring(5, 7).toInt();
-                  int day = startStr.substring(8, 10).toInt();
-                  int hour = startStr.substring(11, 13).toInt();
-                  int minute = startStr.substring(14, 16).toInt();
-                  int second = startStr.substring(17, 19).toInt();
-                  
-                  struct tm t = {0};
-                   t.tm_year = year - 1900;
-                   t.tm_mon = month - 1;
-                   t.tm_mday = day;
-                   t.tm_hour = hour;
-                   t.tm_min = minute;
-                   t.tm_sec = second;
-                   t.tm_isdst = -1;
-                   
-                   // mktime uses local time zone, but we don't have TZ set in environment usually.
-                   // However, timeClient uses an offset.
-                   // The date string IS local time (UTC+8).
-                   // We want to compare this with "now" from timeClient which is also shifted by offset.
-                   // So we should treat this struct tm as UTC so mktime returns the raw epoch that represents that specific time point 
-                   // BUT wait, timeClient.getEpochTime() returns UTC epoch + offset?
-                   // No, getEpochTime() returns Unix Epoch (UTC).
-                   // But getHours() uses the offset.
-                   // Wait, timeClient documentation says:
-                   // "getEpochTime() returns the Unix epoch, which is the number of seconds that have elapsed since January 1, 1970 (midnight UTC/GMT), not counting leap seconds."
-                   // BUT we initialize it with offset 28800 (UTC+8).
-                   // Let's check NTPClient source or assume:
-                   // If we init with offset, getEpochTime() returns (UTC_Epoch + Offset).
-                   // So it returns "Local Epoch".
-                   
-                   // So if we parse "2026-02-15 23:00" which IS local time.
-                   // We want to convert this YMDHMS (Local) to "Local Epoch".
-                   // Since ESP8266 default mktime assumes UTC (if TZ not set),
-                   // mktime(&t) will give us the epoch AS IF that time was UTC.
-                   // This is exactly what we want! 
-                   // Example: 
-                   // Real UTC: 12:00. Local (UTC+8): 20:00.
-                   // timeClient (with offset) returns epoch for 20:00.
-                   // Input string "20:00".
-                   // mktime("20:00") -> epoch for 20:00.
-                   // So they match!
-                   
-                   ev.start_time = mktime(&t); 
-                   
-                   // Debug
-                   Serial.print("Event: ");
-                   Serial.print(year); Serial.print("-"); Serial.print(month); Serial.print("-"); Serial.print(day);
-                   Serial.print(" -> Epoch: "); Serial.println(ev.start_time);
-                   
-                   ev.summary = v["summary"].as<String>();
-                   calendarEvents.push_back(ev);
-              }
-              Serial.print("Parsed events: ");
-              Serial.println(calendarEvents.size());
-              
-              updateCalendarPending = true;
-              lastUpdateTrigger = millis();
-          }
-      } else {
-          Serial.print("JSON Error (Calendar): ");
-          Serial.println(error.c_str());
-      }
-      return;
-  }
-  
   if (strcmp(topic, "epd/weatherrequest") == 0) {
        // Ignore our own request messages if subscribed
        return; 
@@ -2277,12 +1916,6 @@ bool reconnect() {
               Serial.println(config.mqtt_env_topic);
           }
       }
-      if (strlen(config.mqtt_calendar_topic) > 0) {
-          if (client.subscribe(config.mqtt_calendar_topic)) {
-              Serial.print("Subscribed to: ");
-              Serial.println(config.mqtt_calendar_topic);
-          }
-      }
       if (strlen(config.mqtt_shift_topic) > 0) {
           if (client.subscribe(config.mqtt_shift_topic)) {
               Serial.print("Subscribed to: ");
@@ -2332,14 +1965,8 @@ bool reconnect() {
 
 // Button Handlers
 void handleButtonClick() {
-    Serial.println("Click: Switching Page...");
-    if (currentPage == PAGE_WEATHER) {
-        currentPage = PAGE_CALENDAR;
-        displayCalendarPage(false); // Full refresh
-    } else {
-        currentPage = PAGE_WEATHER;
-        displayWeatherDashboard(false); // Full refresh
-    }
+    Serial.println("Click: Refreshing Weather Page...");
+    displayWeatherDashboard(false); // Full refresh
 }
 
 void handleButtonDoubleClick() {
@@ -2348,12 +1975,8 @@ void handleButtonDoubleClick() {
 }
 
 void handleButtonLongPress() {
-    Serial.println("Long Press: Refreshing Current Page...");
-    if (currentPage == PAGE_WEATHER) {
-        displayWeatherDashboard(false); // Full refresh
-    } else {
-        displayCalendarPage(false); // Full refresh
-    }
+    Serial.println("Long Press: Refreshing Weather Page...");
+    displayWeatherDashboard(false); // Full refresh
 }
 
 unsigned long lastMqttRetry = 0;
@@ -2584,7 +2207,6 @@ void setup() {
           client.subscribe(config.mqtt_weather_topic);
           client.subscribe(config.mqtt_date_topic);
           client.subscribe(config.mqtt_env_topic);
-          client.subscribe(config.mqtt_calendar_topic);
           client.subscribe(config.mqtt_shift_topic);
           client.subscribe(config.mqtt_air_quality_topic);
           client.subscribe(config.mqtt_unified_topic); // Add unified topic subscription
@@ -2611,7 +2233,6 @@ void setup() {
 
 
   server.on("/", handleRoot);
-  server.on("/setPage", HTTP_POST, handleSetPage);
   server.on("/files", handleFileManager);
   server.on("/setText", handleSetText);
   server.on("/saveConfig", handleSaveConfig);
@@ -2764,40 +2385,16 @@ void loop() {
   
   // Handle deferred updates
   if (millis() - lastUpdateTrigger > UPDATE_DELAY_MS) {
-      if (updateWeatherPending || updateEnvPending || updateDatePending || (updateCalendarPending && currentPage == PAGE_WEATHER)) {
-          if (currentPage == PAGE_WEATHER) {
-               Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
-               displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
-               refreshDone = true; // Mark as refreshed for battery mode sleep
-               lastRefreshTime = millis(); // Set timestamp for sleep delay
-          }
+      if (updateWeatherPending || updateEnvPending || updateDatePending) {
+          Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
+          displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
+          refreshDone = true; // Mark as refreshed for battery mode sleep
+          lastRefreshTime = millis(); // Set timestamp for sleep delay
           updateWeatherPending = false;
           updateEnvPending = false;
           updateDatePending = false;
           fullRefreshPending = false; // Reset full refresh flag
-          if (currentPage == PAGE_WEATHER) updateCalendarPending = false; // Only clear if we actually refreshed
       }
-      
-      if (updateCalendarPending) {
-          if (currentPage == PAGE_CALENDAR) {
-               Serial.println("Triggering Deferred Calendar Update");
-               displayCalendarPage(true);
-               refreshDone = true; // Mark as refreshed for battery mode sleep
-               lastRefreshTime = millis(); // Set timestamp for sleep delay
-          }
-          updateCalendarPending = false;
-      }
-  }
-  
-  // Handle Immediate UI Page Switch
-  if (switchPagePending) {
-      Serial.println("UI Page Switch Triggered");
-      if (currentPage == PAGE_WEATHER) {
-          displayWeatherDashboard(false); // Full refresh
-      } else if (currentPage == PAGE_CALENDAR) {
-          displayCalendarPage(false); // Full refresh
-      }
-      switchPagePending = false;
   }
   
   // Optimized NTP Sync Strategy (Only if MQTT is connected)
@@ -2842,11 +2439,7 @@ void loop() {
       if (millis() - lastFullRefreshTime > (unsigned long)config.full_refresh_period * 60 * 1000) {
           lastFullRefreshTime = millis();
           Serial.println("Custom Full Refresh Triggered");
-          if (currentPage == PAGE_WEATHER) {
-               displayWeatherDashboard(false); // Full refresh
-          } else if (currentPage == PAGE_CALENDAR) {
-               displayCalendarPage(false); // Full refresh
-          }
+          displayWeatherDashboard(false); // Full refresh
       }
   }
 
@@ -2870,14 +2463,10 @@ void loop() {
       // If it is midnight (00:00), refresh both pages fully to update date
       if (currentHour == 0 && currentMinute == 0) {
           Serial.println("Midnight! Refreshing page...");
-          if (currentPage == PAGE_WEATHER) {
-               displayWeatherDashboard(false); // Full update
-          } else if (currentPage == PAGE_CALENDAR) {
-               displayCalendarPage(false); // Full update
-          }
+          displayWeatherDashboard(false); // Full update
       } else {
           // Normal minute update (only for weather page in TIME mode)
-          if (config.ui_mode == 0 && currentPage == PAGE_WEATHER && currentForecastCount > 0) {
+          if (config.ui_mode == 0 && currentForecastCount > 0) {
               Serial.println("Minute changed, updating display (Partial)...");
               displayWeatherDashboard(true);
           }

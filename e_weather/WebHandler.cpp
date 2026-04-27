@@ -39,7 +39,6 @@ void handleRoot() {
   html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
   html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
   html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
-  html.replace("%MQTT_CALENDAR%", String(config.mqtt_calendar_topic));
   html.replace("%MQTT_SHIFT%", String(config.mqtt_shift_topic));
   html.replace("%MQTT_AQI%", String(config.mqtt_air_quality_topic));
   html.replace("%MQTT_UNIFIED%", String(config.mqtt_unified_topic));
@@ -108,7 +107,6 @@ void handleMqttConfig() {
   html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
   html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
   html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
-  html.replace("%MQTT_CALENDAR%", String(config.mqtt_calendar_topic));
   html.replace("%MQTT_SHIFT%", String(config.mqtt_shift_topic));
   html.replace("%MQTT_AQI%", String(config.mqtt_air_quality_topic));
   html.replace("%MQTT_UNIFIED%", String(config.mqtt_unified_topic));
@@ -233,7 +231,6 @@ void handleSaveConfig() {
   if (server.hasArg("mqtt_weather_topic")) strlcpy(config.mqtt_weather_topic, server.arg("mqtt_weather_topic").c_str(), sizeof(config.mqtt_weather_topic));
   if (server.hasArg("mqtt_date_topic")) strlcpy(config.mqtt_date_topic, server.arg("mqtt_date_topic").c_str(), sizeof(config.mqtt_date_topic));
   if (server.hasArg("mqtt_env_topic")) strlcpy(config.mqtt_env_topic, server.arg("mqtt_env_topic").c_str(), sizeof(config.mqtt_env_topic));
-  if (server.hasArg("mqtt_calendar_topic")) strlcpy(config.mqtt_calendar_topic, server.arg("mqtt_calendar_topic").c_str(), sizeof(config.mqtt_calendar_topic));
   if (server.hasArg("mqtt_shift_topic")) strlcpy(config.mqtt_shift_topic, server.arg("mqtt_shift_topic").c_str(), sizeof(config.mqtt_shift_topic));
   if (server.hasArg("mqtt_air_quality_topic")) strlcpy(config.mqtt_air_quality_topic, server.arg("mqtt_air_quality_topic").c_str(), sizeof(config.mqtt_air_quality_topic));
   if (server.hasArg("mqtt_battery_topic")) strlcpy(config.mqtt_battery_topic, server.arg("mqtt_battery_topic").c_str(), sizeof(config.mqtt_battery_topic));
@@ -273,27 +270,6 @@ void handleSaveConfig() {
   saveConfig();
   
   server.send(200, "text/plain", "OK");
-}
-
-void handleSetPage() {
-  if (server.hasArg("page")) {
-    String page = server.arg("page");
-    if (page == "weather") {
-        currentPage = PAGE_WEATHER;
-        switchPagePending = true;
-        server.sendHeader("Location", "/");
-        server.send(303);
-    } else if (page == "calendar") {
-        currentPage = PAGE_CALENDAR;
-        switchPagePending = true;
-        server.sendHeader("Location", "/");
-        server.send(303);
-    } else {
-        server.send(400, "text/plain", "Invalid page");
-    }
-  } else {
-    server.send(400, "text/plain", "Missing page argument");
-  }
 }
 
 void handleSetText() {
