@@ -1,6 +1,10 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
+#ifndef DEFAULT_DISPLAY_DRIVER
+#define DEFAULT_DISPLAY_DRIVER -1
+#endif
+
 struct Config {
   char wifi_ssid[32] = "Linksys-2.4G-wifi5";
   char wifi_pass[32] = "19811201";
@@ -28,8 +32,8 @@ struct Config {
   
   // Display Mode: 0 = Time Mode (Default), 1 = Date Mode
   int ui_mode = 1;
-  // EPD Driver: 0 = Local_EPD_4IN2, 1 = GxEPD2_2IC
-  int display_driver = 0;
+  // EPD Driver: -1 = Auto, 0 = Local_EPD_4IN2, 1 = GxEPD2_2IC
+  int display_driver = DEFAULT_DISPLAY_DRIVER;
   int adc_pin = 34; // Default ADC pin for battery monitoring
   float adc_ratio = 2.0; // Voltage divider ratio (e.g., 2.0 for 100k/100k)
   float low_battery_threshold = 3.3; // Low battery warning threshold in Volts

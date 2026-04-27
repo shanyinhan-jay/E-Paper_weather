@@ -200,17 +200,6 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             </label>
         </div>
 
-        <h3>EPD Driver</h3>
-        <div class="grid-2-col">
-            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                <input type="radio" name="display_driver" value="0" %DRV_0% style="width:auto;margin:0;"> Local_EPD_4IN2
-            </label>
-            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
-                <input type="radio" name="display_driver" value="1" %DRV_1% style="width:auto;margin:0;"> GxEPD2_2IC
-            </label>
-        </div>
-        <small style="color:#64748b;">保存后立即生效；若当前固件未编译对应驱动，将自动回退到可用驱动。</small>
-
         <h3>ADC Settings (Battery)</h3>
         <div class="grid-3-col">
             <div>

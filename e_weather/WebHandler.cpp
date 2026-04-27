@@ -80,21 +80,6 @@ void handleRoot() {
       html.replace("%INVERT_1%", "");
   }
   
-  int selectedDriver = config.display_driver;
-#if !ENABLE_DRIVER_GX2IC
-  if (selectedDriver == 1) selectedDriver = 0;
-#endif
-#if !ENABLE_DRIVER_LOCAL && ENABLE_DRIVER_GX2IC
-  if (selectedDriver == 0) selectedDriver = 1;
-#endif
-  if (selectedDriver == 1) {
-      html.replace("%DRV_0%", "");
-      html.replace("%DRV_1%", "checked");
-  } else {
-      html.replace("%DRV_0%", "checked");
-      html.replace("%DRV_1%", "");
-  }
-  
   server.send(200, "text/html", html);
 }
 
@@ -247,13 +232,6 @@ void handleSaveConfig() {
   
   if (server.hasArg("invert_display")) config.invert_display = (server.arg("invert_display") == "1");
   if (server.hasArg("ui_mode")) config.ui_mode = server.arg("ui_mode").toInt();
-  if (server.hasArg("display_driver")) config.display_driver = server.arg("display_driver").toInt();
-#if !ENABLE_DRIVER_GX2IC
-  if (config.display_driver == 1) config.display_driver = 0;
-#endif
-#if !ENABLE_DRIVER_LOCAL && ENABLE_DRIVER_GX2IC
-  if (config.display_driver == 0) config.display_driver = 1;
-#endif
   if (server.hasArg("adc_pin")) config.adc_pin = server.arg("adc_pin").toInt();
   if (server.hasArg("adc_ratio")) config.adc_ratio = server.arg("adc_ratio").toFloat();
   if (server.hasArg("low_battery_threshold")) config.low_battery_threshold = server.arg("low_battery_threshold").toFloat();

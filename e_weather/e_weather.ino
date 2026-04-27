@@ -244,9 +244,46 @@ public:
 
 Paint_GFX paint_gfx;
 U8G2_FOR_ADAFRUIT_GFX u8g2;
+static int lastEpdDriverUsed = -1;
+static bool littlefsReady = false;
 
 static inline bool jsonHasKey(const JsonVariantConst& obj, const char* key) {
   return !obj[key].isNull();
+}
+
+static const char* getDriverName(int driver) {
+    if (driver == DISPLAY_DRIVER_LOCAL) return "Local_EPD_4IN2";
+    if (driver == DISPLAY_DRIVER_GX2IC) return "GxEPD2_2IC";
+    if (driver == -1) return "Auto";
+    return "Unknown";
+}
+
+static bool ensureLittleFSReady() {
+    if (littlefsReady) return true;
+
+    Serial.println("LittleFS: mounting...");
+    if (LittleFS.begin(false)) {
+        littlefsReady = true;
+        Serial.println("LittleFS: mounted");
+        return true;
+    }
+
+    Serial.println("LittleFS: mount failed, formatting filesystem...");
+    LittleFS.end();
+    if (!LittleFS.format()) {
+        Serial.println("LittleFS: format failed");
+        return false;
+    }
+
+    Serial.println("LittleFS: format complete, remounting...");
+    if (!LittleFS.begin(false)) {
+        Serial.println("LittleFS: remount failed after format");
+        return false;
+    }
+
+    littlefsReady = true;
+    Serial.println("LittleFS: recovered and mounted");
+    return true;
 }
 
 static bool isDriverAvailable(int driver) {
@@ -268,6 +305,11 @@ static bool isDriverAvailable(int driver) {
 }
 
 static int getDefaultAvailableDriver() {
+#if defined(DEFAULT_DISPLAY_DRIVER)
+    if (isDriverAvailable(DEFAULT_DISPLAY_DRIVER)) {
+        return DEFAULT_DISPLAY_DRIVER;
+    }
+#endif
 #if ENABLE_DRIVER_LOCAL
     return DISPLAY_DRIVER_LOCAL;
 #elif ENABLE_DRIVER_GX2IC
@@ -285,15 +327,36 @@ static int getActiveDisplayDriver() {
 static void applyDisplayDriverConfigFallback() {
     if (!isDriverAvailable(config.display_driver)) {
         int fallback = getDefaultAvailableDriver();
-        Serial.printf("Configured display_driver=%d unavailable, fallback=%d\n", config.display_driver, fallback);
+        Serial.printf("Configured display driver is %s (%d), trying %s (%d) first\n",
+                      getDriverName(config.display_driver), config.display_driver,
+                      getDriverName(fallback), fallback);
         config.display_driver = fallback;
     }
 }
 
-static void epdFlushFrame(bool partial_update, UBYTE* image) {
-    int driver = getActiveDisplayDriver();
+static int getAlternateDisplayDriver(int driver) {
+    if (driver == DISPLAY_DRIVER_LOCAL && isDriverAvailable(DISPLAY_DRIVER_GX2IC)) {
+        return DISPLAY_DRIVER_GX2IC;
+    }
+    if (driver == DISPLAY_DRIVER_GX2IC && isDriverAvailable(DISPLAY_DRIVER_LOCAL)) {
+        return DISPLAY_DRIVER_LOCAL;
+    }
+    return -1;
+}
+
+static void rememberWorkingDisplayDriver(int driver) {
+    if (!isDriverAvailable(driver) || config.display_driver == driver) return;
+    config.display_driver = driver;
+    saveConfig();
+    Serial.printf("Auto-selected display driver: %s (%d)\n", getDriverName(driver), driver);
+}
+
+static bool epdFlushFrameWithDriver(int driver, bool partial_update, UBYTE* image) {
+    lastEpdDriverUsed = driver;
+    Serial.printf("EPD flush using %s (%d)\n", getDriverName(driver), driver);
     if (driver == DISPLAY_DRIVER_LOCAL) {
 #if ENABLE_DRIVER_LOCAL
+        Local_EPD_4IN2_ResetBusyTimeoutFlag();
         if (partial_update) {
             Local_EPD_4IN2_Init_Partial();
             Local_EPD_4IN2_PartialDisplay(0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, image);
@@ -301,21 +364,51 @@ static void epdFlushFrame(bool partial_update, UBYTE* image) {
             Local_EPD_4IN2_Init();
             Local_EPD_4IN2_Display(image);
         }
+        return !Local_EPD_4IN2_HadBusyTimeout();
 #endif
-        return;
+        return false;
     }
 
 #if ENABLE_DRIVER_GX2IC
     // GxEPD2 uses hardware SPI, so bind it to the same wiring used by the local driver.
+    unsigned long gxStart = millis();
     SPI.begin(EPD_SCK_PIN, -1, EPD_MOSI_PIN, EPD_CS_PIN);
     gxDisplay.init(0, true, 10, false, SPI, SPISettings(4000000, MSBFIRST, SPI_MODE0));
     gxDisplay.setRotation(0);
     gxDisplay.drawImage(image, 0, 0, EPD_4IN2_WIDTH, EPD_4IN2_HEIGHT, false, false, false);
+    unsigned long gxElapsed = millis() - gxStart;
+    Serial.printf("GxEPD2_2IC flush elapsed: %lu ms\n", gxElapsed);
+    return gxElapsed < 8000;
 #endif
+    return false;
+}
+
+static void epdFlushFrame(bool partial_update, UBYTE* image) {
+    int primaryDriver = getActiveDisplayDriver();
+    if (epdFlushFrameWithDriver(primaryDriver, partial_update, image)) {
+        return;
+    }
+
+    int fallbackDriver = getAlternateDisplayDriver(primaryDriver);
+    if (fallbackDriver < 0) {
+        Serial.printf("Display flush failed with %s and no alternate driver is available.\n", getDriverName(primaryDriver));
+        return;
+    }
+
+    Serial.printf("Display flush failed with %s, retrying with %s\n",
+                  getDriverName(primaryDriver), getDriverName(fallbackDriver));
+    if (epdFlushFrameWithDriver(fallbackDriver, false, image)) {
+        rememberWorkingDisplayDriver(fallbackDriver);
+        return;
+    }
+
+    Serial.printf("Display flush failed with both %s and %s\n",
+                  getDriverName(primaryDriver), getDriverName(fallbackDriver));
 }
 
 void loadConfig() {
-  if (LittleFS.begin(true)) {
+  littlefsReady = ensureLittleFSReady();
+  if (littlefsReady) {
     if (LittleFS.exists("/config.json")) {
       File configFile = LittleFS.open("/config.json", "r");
       if (configFile) {
@@ -351,7 +444,7 @@ void loadConfig() {
           config.day_end_hour = doc["day_end_hour"] | 18;
           config.invert_display = doc["invert_display"] | false;
           config.ui_mode = doc["ui_mode"] | 0;
-          config.display_driver = doc["display_driver"] | 0;
+          config.display_driver = doc["display_driver"] | DEFAULT_DISPLAY_DRIVER;
           config.adc_pin = doc["adc_pin"] | 34;
           config.adc_ratio = doc["adc_ratio"] | 2.0;
           config.low_battery_threshold = doc["low_battery_threshold"] | 3.3;
@@ -365,10 +458,20 @@ void loadConfig() {
           strlcpy(config.static_dns, doc["static_dns"] | "114.114.114.114", sizeof(config.static_dns));
         }
       }
+    } else {
+      Serial.println("Config: /config.json not found, using defaults");
     }
+  } else {
+    Serial.println("Config: LittleFS unavailable, using in-memory defaults");
   }
 
   applyDisplayDriverConfigFallback();
+  Serial.printf("Configured display driver after load: %s (%d)\n",
+                getDriverName(config.display_driver), config.display_driver);
+  if (littlefsReady && !LittleFS.exists("/config.json")) {
+      saveConfig();
+      Serial.println("Config: default config.json created");
+  }
 
   // Pre-allocate BlackImage to avoid fragmentation
   if (BlackImage == NULL) {
@@ -385,6 +488,11 @@ void loadConfig() {
 }
 
 void saveConfig() {
+  if (!ensureLittleFSReady()) {
+    Serial.println("Config: save skipped because LittleFS is unavailable");
+    return;
+  }
+
   JsonDocument doc;
   doc["wifi_ssid"] = config.wifi_ssid;
   doc["wifi_pass"] = config.wifi_pass;
@@ -425,10 +533,12 @@ void saveConfig() {
 
   File configFile = LittleFS.open("/config.json", "w");
   if (!configFile) {
+    Serial.println("Config: failed to open /config.json for writing");
     return;
   }
   serializeJson(doc, configFile);
   configFile.close();
+  Serial.println("Config: saved");
 }
 
 float getBatteryVoltage() {
@@ -1377,7 +1487,7 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
 
 void hibernateEPD() {
     Serial.println("Hibernating EPD...");
-    int driver = getActiveDisplayDriver();
+    int driver = (lastEpdDriverUsed >= 0) ? lastEpdDriverUsed : getActiveDisplayDriver();
     if (driver == DISPLAY_DRIVER_LOCAL) {
 #if ENABLE_DRIVER_LOCAL
         // 1. Put EPD to deep sleep mode via its controller

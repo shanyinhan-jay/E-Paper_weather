@@ -19,6 +19,17 @@
 #define PARTIAL_WIDTH_LIMIT  EPD_4IN2_WIDTH
 #define PARTIAL_HEIGHT_LIMIT EPD_4IN2_HEIGHT
 static UBYTE EPD_4IN2_Partial_DATA[PARTIAL_WIDTH_LIMIT * PARTIAL_HEIGHT_LIMIT / 8] = {0x00};
+static bool s_local_epd_busy_timeout = false;
+
+void Local_EPD_4IN2_ResetBusyTimeoutFlag(void)
+{
+    s_local_epd_busy_timeout = false;
+}
+
+bool Local_EPD_4IN2_HadBusyTimeout(void)
+{
+    return s_local_epd_busy_timeout;
+}
 
 static const unsigned char EPD_4IN2_lut_vcom0[] = {
     0x00, 0x08, 0x08, 0x00, 0x00, 0x02,	
@@ -180,8 +191,15 @@ parameter:
 void Local_EPD_4IN2_ReadBusy(void)
 {
     Debug("e-Paper busy\r\n");
+    s_local_epd_busy_timeout = false;
 	EPD_4IN2_SendCommand(0x71);
+    unsigned long start = millis();
     while(DEV_Digital_Read(EPD_BUSY_PIN) == 0) {      //LOW: idle, HIGH: busy
+        if (millis() - start > 5000) {
+            s_local_epd_busy_timeout = true;
+            Debug("e-Paper busy timeout\r\n");
+            break;
+        }
 		EPD_4IN2_SendCommand(0x71);
         DEV_Delay_ms(100);
     }

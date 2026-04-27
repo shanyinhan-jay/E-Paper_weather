@@ -27,6 +27,8 @@ void Local_EPD_4IN2_Clear(void);
 void Local_EPD_4IN2_Display(UBYTE *Image);
 void Local_EPD_4IN2_Sleep(void);
 void Local_EPD_4IN2_PartialDisplay(UWORD X_start,UWORD Y_start,UWORD X_end,UWORD Y_end, UBYTE *Image);
+void Local_EPD_4IN2_ResetBusyTimeoutFlag(void);
+bool Local_EPD_4IN2_HadBusyTimeout(void);
 
 void Local_EPD_4IN2_Init_4Gray(void);
 void Local_EPD_4IN2_4GrayDisplay(const UBYTE *Image);
