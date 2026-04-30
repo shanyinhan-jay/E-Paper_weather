@@ -118,10 +118,30 @@ struct WeatherData {
     String icon_night;
 };
 
+struct HourlyWeatherData {
+    String fx_time;
+    String temp;
+    String icon;
+    String text;
+    String wind_dir;
+    String wind_sc;
+    String humidity;
+};
+
+enum BottomForecastViewMode : uint8_t {
+    BOTTOM_VIEW_DAILY = 0,
+    BOTTOM_VIEW_HOURLY = 1
+};
+
 // Global Weather Data
 std::vector<ShiftEvent> shiftEvents;
 WeatherData currentForecast[7];
 int currentForecastCount = 0;
+HourlyWeatherData currentHourlyForecast[12];
+int currentHourlyForecastCount = 0;
+BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
+unsigned long hourlyViewActivatedAt = 0;
+const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -429,6 +449,7 @@ void loadConfig() {
           strlcpy(config.mqtt_pass, doc["mqtt_pass"] | "", sizeof(config.mqtt_pass));
           strlcpy(config.mqtt_topic, doc["mqtt_topic"] | "epd/text", sizeof(config.mqtt_topic));
           strlcpy(config.mqtt_weather_topic, doc["mqtt_weather_topic"] | "epd/weather", sizeof(config.mqtt_weather_topic));
+          strlcpy(config.mqtt_hourly_topic, doc["mqtt_hourly_topic"] | "shanyinhan/epd/hourly", sizeof(config.mqtt_hourly_topic));
           strlcpy(config.mqtt_date_topic, doc["mqtt_date_topic"] | "epd/date", sizeof(config.mqtt_date_topic));
           strlcpy(config.mqtt_env_topic, doc["mqtt_env_topic"] | "epd/env", sizeof(config.mqtt_env_topic));
           strlcpy(config.mqtt_shift_topic, doc["mqtt_shift_topic"] | "epd/shift", sizeof(config.mqtt_shift_topic));
@@ -503,6 +524,7 @@ void saveConfig() {
   doc["mqtt_pass"] = config.mqtt_pass;
   doc["mqtt_topic"] = config.mqtt_topic;
   doc["mqtt_weather_topic"] = config.mqtt_weather_topic;
+  doc["mqtt_hourly_topic"] = config.mqtt_hourly_topic;
   doc["mqtt_date_topic"] = config.mqtt_date_topic;
   doc["mqtt_env_topic"] = config.mqtt_env_topic;
   doc["mqtt_shift_topic"] = config.mqtt_shift_topic;
@@ -1029,6 +1051,264 @@ static String normalizeWeatherIconCode(const String& rawCode) {
     return code;
 }
 
+static const char* getBottomForecastViewName(BottomForecastViewMode view) {
+    return (view == BOTTOM_VIEW_HOURLY) ? "12-hour" : "daily";
+}
+
+static void clearHourlyForecastData() {
+    for (int i = 0; i < 12; ++i) {
+        currentHourlyForecast[i].fx_time = "";
+        currentHourlyForecast[i].temp = "";
+        currentHourlyForecast[i].icon = "";
+        currentHourlyForecast[i].text = "";
+        currentHourlyForecast[i].wind_dir = "";
+        currentHourlyForecast[i].wind_sc = "";
+        currentHourlyForecast[i].humidity = "";
+    }
+    currentHourlyForecastCount = 0;
+}
+
+static String extractHourLabel(const String& fxTime) {
+    int tIndex = fxTime.indexOf('T');
+    if (tIndex >= 0 && tIndex + 5 <= fxTime.length()) {
+        return fxTime.substring(tIndex + 1, tIndex + 6);
+    }
+    if (fxTime.length() >= 5) {
+        return fxTime.substring(0, 5);
+    }
+    return fxTime;
+}
+
+static void drawHourlyForecastIconExact(const String& rawCode, int centerX, int iconTopY, int bmpY) {
+    String iconCode = normalizeWeatherIconCode(rawCode);
+    bool iconDrawn = false;
+    if (iconCode.length() > 0) {
+        const unsigned char* iconData = getSmallIconData(iconCode);
+        if (iconData) {
+            drawIconFromProgmem(iconData, centerX - 18, iconTopY, 36, 36, IconRenderMode::Exact);
+            iconDrawn = true;
+        }
+    }
+
+    if (!iconDrawn && iconCode.length() > 0) {
+        String iconPath = "/icons/" + iconCode + ".bmp";
+        if (LittleFS.exists(iconPath)) {
+            drawBmp(iconPath, centerX - 16, bmpY);
+            iconDrawn = true;
+        }
+    }
+
+    if (!iconDrawn) {
+        drawNoIconPlaceholder(centerX - 18, iconTopY, 36, 36);
+    }
+}
+
+static void drawHourlyForecastSlot(const HourlyWeatherData& item, int centerX, int timeBaselineY, int iconTopY, int bmpY, int valueY, bool showTime) {
+    if (showTime) {
+        u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        String timeLabel = extractHourLabel(item.fx_time);
+        int timeWidth = u8g2.getUTF8Width(timeLabel.c_str());
+        u8g2.drawUTF8(centerX - (timeWidth / 2), timeBaselineY, timeLabel.c_str());
+    }
+
+    drawHourlyForecastIconExact(item.icon, centerX, iconTopY, bmpY);
+}
+
+static void drawDailyForecastSection(int startY) {
+    int minTemp = 100, maxTemp = -100;
+    int highs[7], lows[7];
+    int xCoords[7];
+    int count = 0;
+
+    for (int i = 1; i < currentForecastCount && i <= 6; i++) {
+        String tStr = currentForecast[i].temp;
+        int slash = tStr.indexOf('/');
+        if (slash > 0) {
+            highs[i] = tStr.substring(0, slash).toInt();
+            lows[i] = tStr.substring(slash + 1).toInt();
+        } else {
+            highs[i] = tStr.toInt();
+            lows[i] = tStr.toInt();
+        }
+        if (highs[i] > maxTemp) maxTemp = highs[i];
+        if (lows[i] < minTemp) minTemp = lows[i];
+        if (highs[i] < minTemp) minTemp = highs[i];
+        if (lows[i] > maxTemp) maxTemp = lows[i];
+        count++;
+    }
+
+    if (maxTemp == minTemp) { maxTemp++; minTemp--; }
+    int tempRange = maxTemp - minTemp;
+    if (tempRange == 0) tempRange = 1;
+
+    int chartTop = startY + 60;
+    int chartBottom = startY + 90;
+    int chartHeight = chartBottom - chartTop;
+
+    for (int i = 1; i < currentForecastCount && i <= 6; i++) {
+        int x1 = (i - 1) * EPD_4IN2_WIDTH / 6;
+        int x2 = i * EPD_4IN2_WIDTH / 6;
+        int centerX = x1 + ((x2 - x1) / 2);
+        xCoords[i] = centerX;
+
+        String dateShort = currentForecast[i].date;
+        if (dateShort.length() >= 10) dateShort = dateShort.substring(5);
+        u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        int dWidth = u8g2.getUTF8Width(dateShort.c_str());
+        u8g2.drawUTF8(centerX - (dWidth / 2), startY, dateShort.c_str());
+
+        int iconY = startY + 16;
+        String dayLookupCode = normalizeWeatherIconCode(currentForecast[i].icon_day);
+        bool dayIconDrawn = false;
+        if (dayLookupCode.length() > 0) {
+            const unsigned char* iconData = getSmallIconData(dayLookupCode);
+            if (iconData) {
+                drawIconFromProgmem(iconData, centerX - 18, iconY - 7, 36, 36, IconRenderMode::Exact);
+                dayIconDrawn = true;
+            }
+        }
+
+        if (!dayIconDrawn && dayLookupCode.length() > 0) {
+            String iconPath = "/icons/" + dayLookupCode + ".bmp";
+            if (LittleFS.exists(iconPath)) {
+                drawBmp(iconPath, centerX - 16, iconY);
+                dayIconDrawn = true;
+            }
+        }
+
+        if (!dayIconDrawn) {
+            drawNoIconPlaceholder(centerX - 18, iconY - 7, 36, 36);
+        }
+
+        String nightLookupCode = normalizeWeatherIconCode(currentForecast[i].icon_night);
+        bool nightIconDrawn = false;
+        if (nightLookupCode.length() > 0) {
+            const unsigned char* iconData = getSmallIconData(nightLookupCode);
+            if (iconData) {
+                drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, IconRenderMode::Exact);
+                nightIconDrawn = true;
+            }
+        }
+
+        if (!nightIconDrawn && nightLookupCode.length() > 0) {
+            String iconPath = "/icons/" + nightLookupCode + ".bmp";
+            if (LittleFS.exists(iconPath)) {
+                drawBmp(iconPath, centerX - 16, startY + 104);
+                nightIconDrawn = true;
+            }
+        }
+
+        if (!nightIconDrawn) {
+            drawNoIconPlaceholder(centerX - 18, startY + 104, 36, 36);
+        }
+    }
+
+    if (count > 1) {
+        u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        for (int i = 1; i < currentForecastCount && i < 6; i++) {
+            int yH1 = chartBottom - ((highs[i] - minTemp) * chartHeight / tempRange);
+            int yH2 = chartBottom - ((highs[i + 1] - minTemp) * chartHeight / tempRange);
+            paint_gfx.drawLine(xCoords[i], yH1, xCoords[i + 1], yH2, 1);
+
+            int yL1 = chartBottom - ((lows[i] - minTemp) * chartHeight / tempRange);
+            int yL2 = chartBottom - ((lows[i + 1] - minTemp) * chartHeight / tempRange);
+            paint_gfx.drawLine(xCoords[i], yL1, xCoords[i + 1], yL2, 1);
+
+            paint_gfx.fillCircle(xCoords[i], yH1, 2, 1);
+            paint_gfx.fillCircle(xCoords[i], yL1, 2, 1);
+
+            String hStr = String(highs[i]);
+            int hw = u8g2.getUTF8Width(hStr.c_str());
+            u8g2.drawUTF8(xCoords[i] - hw / 2, yH1 - 5, hStr.c_str());
+
+            String lStr = String(lows[i]);
+            int lw = u8g2.getUTF8Width(lStr.c_str());
+            u8g2.drawUTF8(xCoords[i] - lw / 2, yL1 + 12, lStr.c_str());
+
+            if (i == count - 1 || i == 5) {
+                paint_gfx.fillCircle(xCoords[i + 1], yH2, 2, 1);
+                paint_gfx.fillCircle(xCoords[i + 1], yL2, 2, 1);
+
+                String hStr2 = String(highs[i + 1]);
+                int hw2 = u8g2.getUTF8Width(hStr2.c_str());
+                u8g2.drawUTF8(xCoords[i + 1] - hw2 / 2, yH2 - 5, hStr2.c_str());
+
+                String lStr2 = String(lows[i + 1]);
+                int lw2 = u8g2.getUTF8Width(lStr2.c_str());
+                u8g2.drawUTF8(xCoords[i + 1] - lw2 / 2, yL2 + 12, lStr2.c_str());
+            }
+        }
+    }
+}
+
+static void drawHourlyForecastSection(int startY) {
+    int count = currentHourlyForecastCount;
+    if (count <= 0) {
+        u8g2.setFont(u8g2_font_wqy12_t_gb2312);
+        const char* msg = "暂无未来12小时天气数据";
+        int msgWidth = u8g2.getUTF8Width(msg);
+        u8g2.drawUTF8((EPD_4IN2_WIDTH - msgWidth) / 2, startY + 80, msg);
+        return;
+    }
+
+    int visibleCount = (count > 12) ? 12 : count;
+    int chartTop = startY + 60;
+    int chartBottom = startY + 90;
+    int chartHeight = chartBottom - chartTop;
+    int tempMin = 100, tempMax = -100;
+    int temps[12];
+    int xCoords[12];
+    int slotCenters[6];
+
+    for (int i = 0; i < visibleCount; ++i) {
+        temps[i] = currentHourlyForecast[i].temp.toInt();
+        if (temps[i] < tempMin) tempMin = temps[i];
+        if (temps[i] > tempMax) tempMax = temps[i];
+    }
+
+    if (tempMax == tempMin) { tempMax++; tempMin--; }
+    int tempRange = tempMax - tempMin;
+    if (tempRange == 0) tempRange = 1;
+
+    for (int i = 0; i < 6; ++i) {
+        int x1 = i * EPD_4IN2_WIDTH / 6;
+        int x2 = (i + 1) * EPD_4IN2_WIDTH / 6;
+        slotCenters[i] = x1 + ((x2 - x1) / 2);
+    }
+
+    for (int i = 0; i < visibleCount; ++i) {
+        int x1 = i * EPD_4IN2_WIDTH / 12;
+        int x2 = (i + 1) * EPD_4IN2_WIDTH / 12;
+        int centerX = x1 + ((x2 - x1) / 2);
+        xCoords[i] = centerX;
+
+        if (i < 6) {
+            drawHourlyForecastSlot(currentHourlyForecast[i], slotCenters[i], startY, startY + 9, startY + 16, startY + 55, true);
+        } else {
+            drawHourlyForecastSlot(currentHourlyForecast[i], slotCenters[i - 6], startY, startY + 104, startY + 104, startY + 146, false);
+        }
+    }
+
+    u8g2.setFont(u8g2_font_5x7_tf);
+
+    for (int i = 0; i < visibleCount - 1; ++i) {
+        int yT1 = chartBottom - ((temps[i] - tempMin) * chartHeight / tempRange);
+        int yT2 = chartBottom - ((temps[i + 1] - tempMin) * chartHeight / tempRange);
+
+        paint_gfx.drawLine(xCoords[i], yT1, xCoords[i + 1], yT2, 1);
+    }
+
+    for (int i = 0; i < visibleCount; ++i) {
+        int yTemp = chartBottom - ((temps[i] - tempMin) * chartHeight / tempRange);
+
+        paint_gfx.fillCircle(xCoords[i], yTemp, 2, 1);
+
+        String tempLabel = String(temps[i]);
+        int tempWidth = u8g2.getUTF8Width(tempLabel.c_str());
+        u8g2.drawUTF8(xCoords[i] - tempWidth / 2, yTemp - 4, tempLabel.c_str());
+    }
+}
+
 void displayWeatherDashboard(bool partial_update, bool sendSignal) {
     DEV_Module_Init();
     
@@ -1316,149 +1596,12 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
         // 分割线
         paint_gfx.drawFastHLine(0, 155, EPD_4IN2_WIDTH, 2); 
 
-        // === 底部 6 天预报 ===
+        // === 底部预报区：6天 / 12小时 ===
         int startY = 155;
-        
-        // 1. Pre-calculate Min/Max for scaling
-        int minTemp = 100, maxTemp = -100;
-        int highs[7], lows[7];
-        int xCoords[7];
-        int count = 0;
-
-        for(int i=1; i<currentForecastCount && i<=6; i++) {
-            String tStr = currentForecast[i].temp;
-            int slash = tStr.indexOf('/');
-            if (slash > 0) {
-                highs[i] = tStr.substring(0, slash).toInt();
-                lows[i] = tStr.substring(slash + 1).toInt();
-            } else {
-                highs[i] = tStr.toInt();
-                lows[i] = tStr.toInt();
-            }
-            if (highs[i] > maxTemp) maxTemp = highs[i];
-            if (lows[i] < minTemp) minTemp = lows[i];
-            if (highs[i] < minTemp) minTemp = highs[i]; // Safety
-            if (lows[i] > maxTemp) maxTemp = lows[i];   // Safety
-            count++;
-        }
-        
-        // Add padding to range
-        if (maxTemp == minTemp) { maxTemp++; minTemp--; }
-        int tempRange = maxTemp - minTemp;
-        if (tempRange == 0) tempRange = 1; // Prevent div/0
-
-        // Chart Area
-        int chartTop = startY + 60;   
-        int chartBottom = startY + 90; 
-        int chartHeight = chartBottom - chartTop;
-
-        for(int i=1; i<currentForecastCount && i<=6; i++) {
-            int x1 = (i - 1) * EPD_4IN2_WIDTH / 6;
-            int x2 = i * EPD_4IN2_WIDTH / 6;
-            int centerX = x1 + ((x2 - x1) / 2);
-            xCoords[i] = centerX;
-            
-            // 0. Date (Added above day icon)
-            String dateShort = currentForecast[i].date;
-            if (dateShort.length() >= 10) dateShort = dateShort.substring(5);
-            u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-            int dWidth = u8g2.getUTF8Width(dateShort.c_str());
-            u8g2.drawUTF8(centerX - (dWidth/2), startY , dateShort.c_str());
-
-            // Day Icon (Moved further DOWN to accommodate date)
-            // Was startY + 2. Date ends at startY + 12. Icon needs space.
-            // Let's move icon to startY + 16.
-            int iconY = startY + 16;
-            String dayLookupCode = normalizeWeatherIconCode(currentForecast[i].icon_day);
-            
-            bool dayIconDrawn = false;
-            if (dayLookupCode.length() > 0) {
-                // Exact code match for lower forecast icons
-                const unsigned char* iconData = getSmallIconData(dayLookupCode);
-                if (iconData) {
-                    drawIconFromProgmem(iconData, centerX - 18, iconY - 7, 36, 36, IconRenderMode::Exact);
-                    dayIconDrawn = true;
-                }
-            }
-
-            if (!dayIconDrawn && dayLookupCode.length() > 0) {
-                String iconPath = "/icons/" + dayLookupCode + ".bmp";
-                if (LittleFS.exists(iconPath)) {
-                    drawBmp(iconPath, centerX - 16, iconY);
-                    dayIconDrawn = true;
-                }
-            }
-
-            if (!dayIconDrawn) {
-                drawNoIconPlaceholder(centerX - 18, iconY - 7, 36, 36);
-            }
-            
-            // Night Icon (Moved DOWN to startY + 102)
-            String nightLookupCode = normalizeWeatherIconCode(currentForecast[i].icon_night);
-            bool nightIconDrawn = false;
-            if (nightLookupCode.length() > 0) {
-                const unsigned char* iconData = getSmallIconData(nightLookupCode);
-                if (iconData) {
-                    drawIconFromProgmem(iconData, centerX - 18, startY + 104, 36, 36, IconRenderMode::Exact);
-                    nightIconDrawn = true;
-                }
-            }
-
-            if (!nightIconDrawn && nightLookupCode.length() > 0) {
-                String iconPath = "/icons/" + nightLookupCode + ".bmp";
-                if (LittleFS.exists(iconPath)) {
-                    drawBmp(iconPath, centerX - 16, startY + 104);
-                    nightIconDrawn = true;
-                }
-            }
-
-            if (!nightIconDrawn) {
-                drawNoIconPlaceholder(centerX - 18, startY + 104, 36, 36);
-            }
-
-            // Separator line removed
-        }
-        
-        // 4. Draw Curves
-        if (count > 1) {
-            u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-            for (int i = 1; i < currentForecastCount && i < 6; i++) { // Connect i to i+1
-                 // Map High
-                 int yH1 = chartBottom - ((highs[i] - minTemp) * chartHeight / tempRange);
-                 int yH2 = chartBottom - ((highs[i+1] - minTemp) * chartHeight / tempRange);
-                 paint_gfx.drawLine(xCoords[i], yH1, xCoords[i+1], yH2, 1);
-                 
-                 // Map Low
-                 int yL1 = chartBottom - ((lows[i] - minTemp) * chartHeight / tempRange);
-                 int yL2 = chartBottom - ((lows[i+1] - minTemp) * chartHeight / tempRange);
-                 paint_gfx.drawLine(xCoords[i], yL1, xCoords[i+1], yL2, 1);
-                 
-                 // Draw dots and text for point i
-                 paint_gfx.fillCircle(xCoords[i], yH1, 2, 1);
-                 paint_gfx.fillCircle(xCoords[i], yL1, 2, 1);
-                 
-                 String hStr = String(highs[i]);
-                 int hw = u8g2.getUTF8Width(hStr.c_str());
-                 u8g2.drawUTF8(xCoords[i] - hw/2, yH1 - 5, hStr.c_str());
-                 
-                 String lStr = String(lows[i]);
-                 int lw = u8g2.getUTF8Width(lStr.c_str());
-                 u8g2.drawUTF8(xCoords[i] - lw/2, yL1 + 12, lStr.c_str());
-                 
-                 // Handle last point (i+1) in the last iteration
-                 if (i == count - 1 || i == 5) {
-                     paint_gfx.fillCircle(xCoords[i+1], yH2, 2, 1);
-                     paint_gfx.fillCircle(xCoords[i+1], yL2, 2, 1);
-                     
-                     String hStr2 = String(highs[i+1]);
-                     int hw2 = u8g2.getUTF8Width(hStr2.c_str());
-                     u8g2.drawUTF8(xCoords[i+1] - hw2/2, yH2 - 5, hStr2.c_str());
-                     
-                     String lStr2 = String(lows[i+1]);
-                     int lw2 = u8g2.getUTF8Width(lStr2.c_str());
-                     u8g2.drawUTF8(xCoords[i+1] - lw2/2, yL2 + 12, lStr2.c_str());
-                 }
-            }
+        if (bottomForecastView == BOTTOM_VIEW_HOURLY && currentHourlyForecastCount > 0) {
+            drawHourlyForecastSection(startY);
+        } else {
+            drawDailyForecastSection(startY);
         }
 
         // 刷屏控制
@@ -1841,6 +1984,57 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
        return; 
   }
 
+  if (strcmp(topic, config.mqtt_hourly_topic) == 0) {
+      Serial.println("Hourly forecast updated");
+
+      JsonDocument doc;
+      JsonDocument filter;
+      filter["hourly"][0]["fxTime"] = true;
+      filter["hourly"][0]["temp"] = true;
+      filter["hourly"][0]["icon"] = true;
+      filter["hourly"][0]["text"] = true;
+      filter["hourly"][0]["windDir"] = true;
+      filter["hourly"][0]["windScale"] = true;
+      filter["hourly"][0]["humidity"] = true;
+
+      DeserializationError error = deserializeJson(doc, (char*)payload, length, DeserializationOption::Filter(filter));
+      if (!error) {
+          JsonArray data = doc["hourly"];
+          if (data.isNull() && doc.is<JsonArray>()) {
+              data = doc.as<JsonArray>();
+          }
+
+          clearHourlyForecastData();
+          int count = 0;
+          for (JsonVariant v : data) {
+              if (count >= 12) break;
+              if (jsonHasKey(v, "fxTime")) currentHourlyForecast[count].fx_time = v["fxTime"].as<String>();
+              if (jsonHasKey(v, "temp")) currentHourlyForecast[count].temp = v["temp"].as<String>();
+              if (jsonHasKey(v, "icon")) currentHourlyForecast[count].icon = v["icon"].as<String>();
+              if (jsonHasKey(v, "text")) currentHourlyForecast[count].text = v["text"].as<String>();
+              if (jsonHasKey(v, "windDir")) currentHourlyForecast[count].wind_dir = v["windDir"].as<String>();
+              if (jsonHasKey(v, "windScale")) currentHourlyForecast[count].wind_sc = v["windScale"].as<String>();
+              if (jsonHasKey(v, "humidity")) currentHourlyForecast[count].humidity = v["humidity"].as<String>();
+
+              if (currentHourlyForecast[count].fx_time.length() > 0) {
+                  count++;
+              }
+          }
+
+          currentHourlyForecastCount = count;
+          Serial.printf("Hourly forecast count: %d\n", count);
+          if (count > 0 && bottomForecastView == BOTTOM_VIEW_HOURLY) {
+              updateWeatherPending = true;
+              fullRefreshPending = true;
+              lastUpdateTrigger = millis();
+          }
+      } else {
+          Serial.print("JSON Error (Hourly): ");
+          Serial.println(error.c_str());
+      }
+      return;
+  }
+
   if (strcmp(topic, config.mqtt_weather_topic) == 0) {
       Serial.println("Weather updated");
 
@@ -2021,6 +2215,12 @@ bool reconnect() {
               Serial.println("Subscription failed");
           }
       }
+      if (strlen(config.mqtt_hourly_topic) > 0) {
+          if (client.subscribe(config.mqtt_hourly_topic)) {
+              Serial.print("Subscribed to: ");
+              Serial.println(config.mqtt_hourly_topic);
+          }
+      }
       if (strlen(config.mqtt_date_topic) > 0) {
           if (client.subscribe(config.mqtt_date_topic)) {
               Serial.print("Subscribed to: ");
@@ -2082,7 +2282,15 @@ bool reconnect() {
 
 // Button Handlers
 void handleButtonClick() {
-    Serial.println("Click: Refreshing Weather Page...");
+    if (currentHourlyForecastCount <= 0) {
+        Serial.println("Click: Hourly forecast unavailable, keeping daily view");
+        displayWeatherDashboard(false);
+        return;
+    }
+
+    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
+    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
+    Serial.printf("Click: switched bottom forecast to %s view\n", getBottomForecastViewName(bottomForecastView));
     displayWeatherDashboard(false); // Full refresh
 }
 
@@ -2322,6 +2530,7 @@ void setup() {
 
           client.subscribe(config.mqtt_topic);
           client.subscribe(config.mqtt_weather_topic);
+          client.subscribe(config.mqtt_hourly_topic);
           client.subscribe(config.mqtt_date_topic);
           client.subscribe(config.mqtt_env_topic);
           client.subscribe(config.mqtt_shift_topic);
@@ -2424,6 +2633,15 @@ void setup() {
 void loop() {
   button.tick();
   server.handleClient();
+
+  if (bottomForecastView == BOTTOM_VIEW_HOURLY &&
+      hourlyViewActivatedAt > 0 &&
+      millis() - hourlyViewActivatedAt >= HOURLY_VIEW_AUTO_RETURN_MS) {
+      bottomForecastView = BOTTOM_VIEW_DAILY;
+      hourlyViewActivatedAt = 0;
+      Serial.println("Hourly view timeout: switched bottom forecast back to daily view");
+      displayWeatherDashboard(false);
+  }
   
   // WiFi Handling & Blocking
   if (strlen(config.wifi_ssid) > 0) {

@@ -36,6 +36,7 @@ void handleRoot() {
   html.replace("%MQTT_PASS%", String(config.mqtt_pass));
   html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
   html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
+  html.replace("%MQTT_HOURLY%", String(config.mqtt_hourly_topic));
   html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
   html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
   html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
@@ -89,6 +90,7 @@ void handleMqttConfig() {
   
   html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
   html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
+  html.replace("%MQTT_HOURLY%", String(config.mqtt_hourly_topic));
   html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
   html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
   html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
@@ -214,6 +216,7 @@ void handleSaveConfig() {
   if (server.hasArg("mqtt_pass")) strlcpy(config.mqtt_pass, server.arg("mqtt_pass").c_str(), sizeof(config.mqtt_pass));
   if (server.hasArg("mqtt_topic")) strlcpy(config.mqtt_topic, server.arg("mqtt_topic").c_str(), sizeof(config.mqtt_topic));
   if (server.hasArg("mqtt_weather_topic")) strlcpy(config.mqtt_weather_topic, server.arg("mqtt_weather_topic").c_str(), sizeof(config.mqtt_weather_topic));
+  if (server.hasArg("mqtt_hourly_topic")) strlcpy(config.mqtt_hourly_topic, server.arg("mqtt_hourly_topic").c_str(), sizeof(config.mqtt_hourly_topic));
   if (server.hasArg("mqtt_date_topic")) strlcpy(config.mqtt_date_topic, server.arg("mqtt_date_topic").c_str(), sizeof(config.mqtt_date_topic));
   if (server.hasArg("mqtt_env_topic")) strlcpy(config.mqtt_env_topic, server.arg("mqtt_env_topic").c_str(), sizeof(config.mqtt_env_topic));
   if (server.hasArg("mqtt_shift_topic")) strlcpy(config.mqtt_shift_topic, server.arg("mqtt_shift_topic").c_str(), sizeof(config.mqtt_shift_topic));

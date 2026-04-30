@@ -388,6 +388,9 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
         <h3>Weather Topic</h3>
         <input type='text' name='mqtt_weather_topic' value='%MQTT_WEATHER%' placeholder="epd/weather">
 
+        <h3>Hourly Forecast Topic</h3>
+        <input type='text' name='mqtt_hourly_topic' value='%MQTT_HOURLY%' placeholder="epd/hourly">
+
         <h3>Date/Calendar Topic</h3>
         <input type='text' name='mqtt_date_topic' value='%MQTT_DATE%' placeholder="epd/date">
 

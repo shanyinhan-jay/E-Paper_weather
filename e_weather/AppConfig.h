@@ -15,6 +15,7 @@ struct Config {
   char mqtt_pass[32] = "";
   char mqtt_topic[64] = "shanyinhan/epd/text";
   char mqtt_weather_topic[64] = "shanyinhan/epd/weather";
+  char mqtt_hourly_topic[64] = "shanyinhan/epd/hourly";
   char mqtt_date_topic[64] = "shanyinhan/epd/date";
   char mqtt_env_topic[64] = "shanyinhan/epd/env";
   char mqtt_shift_topic[64] = "shanyinhan/epd/shift";
