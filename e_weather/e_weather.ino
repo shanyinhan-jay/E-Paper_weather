@@ -1285,7 +1285,7 @@ static void drawHourlyForecastSection(int startY) {
         if (i < 6) {
             drawHourlyForecastSlot(currentHourlyForecast[i], slotCenters[i], startY, startY + 9, startY + 16, startY + 55, true);
         } else {
-            drawHourlyForecastSlot(currentHourlyForecast[i], slotCenters[i - 6], startY, startY + 104, startY + 104, startY + 146, false);
+            drawHourlyForecastSlot(currentHourlyForecast[i], slotCenters[i - 6], startY + 98, startY + 104, startY + 104, startY + 146, true);
         }
     }
 
