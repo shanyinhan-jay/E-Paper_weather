@@ -10,10 +10,10 @@
 - ADC :34
 - ADC_SWITCH_EN_PIN : 5 // HIGH = enable TPS22860 for battery sensing
 - MODE_PIN : 19 // HIGH = Battery, LOW = DC
-- TOUCH_TOGGLE_PIN : 4 // ESP32 touch pin, toggles daily/hourly bottom view
+- BUTTON_PIN : 4 // Active LOW button input
 - LED_PIN : 2
 - BYE_SIGNAL_PIN : 18 // Low when task finished (Battery Mode only)
-- UNUSED : 4
+- UNUSED : 0
 ·*/
 // Serial2 Communication
 
@@ -143,11 +143,6 @@ int currentHourlyForecastCount = 0;
 BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
 unsigned long hourlyViewActivatedAt = 0;
 const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
-uint16_t touchToggleBaseline = 0;
-uint16_t touchToggleThreshold = 0;
-bool touchToggleArmed = true;
-unsigned long lastTouchToggleMs = 0;
-const unsigned long TOUCH_TOGGLE_COOLDOWN_MS = 800;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -166,15 +161,6 @@ bool updateDatePending = false;
 bool fullRefreshPending = false; // Flag for full refresh instead of partial
 unsigned long lastUpdateTrigger = 0;
 const unsigned long UPDATE_DELAY_MS = 200; // Wait 200ms after last message to update (debounce)
-
-// Battery Mode & Deep Sleep Globals
-bool refreshDone = false;
-unsigned long lastRefreshTime = 0; // Timestamp of last display update
-bool configMode = false;
-unsigned long wakeTime = 0;
-
-// Forward declaration
-void enterDeepSleep();
 
 static void setAdcMeasurementPower(bool enabled) {
     digitalWrite(ADC_SWITCH_EN_PIN, enabled ? HIGH : LOW);
@@ -1059,63 +1045,6 @@ static String normalizeWeatherIconCode(const String& rawCode) {
 
 static const char* getBottomForecastViewName(BottomForecastViewMode view) {
     return (view == BOTTOM_VIEW_HOURLY) ? "12-hour" : "daily";
-}
-
-static void toggleBottomForecastView(const char* source) {
-    if (currentHourlyForecastCount <= 0) {
-        Serial.printf("%s: Hourly forecast unavailable, keeping daily view\n", source);
-        displayWeatherDashboard(false);
-        return;
-    }
-
-    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
-    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
-    Serial.printf("%s: switched bottom forecast to %s view\n", source, getBottomForecastViewName(bottomForecastView));
-    displayWeatherDashboard(false);
-}
-
-static void calibrateTouchToggleInput() {
-    uint32_t sum = 0;
-    const int sampleCount = 12;
-    for (int i = 0; i < sampleCount; ++i) {
-        sum += touchRead(TOUCH_TOGGLE_PIN);
-        delay(10);
-    }
-
-    touchToggleBaseline = sum / sampleCount;
-    if (touchToggleBaseline <= 8) {
-        touchToggleThreshold = 0;
-        Serial.printf("Touch toggle on GPIO %d disabled, baseline=%u\n", TOUCH_TOGGLE_PIN, touchToggleBaseline);
-        return;
-    }
-
-    uint16_t threshold = (touchToggleBaseline * 70) / 100;
-    if (threshold >= touchToggleBaseline) {
-        threshold = touchToggleBaseline - 1;
-    }
-    if (touchToggleBaseline - threshold < 6) {
-        threshold = touchToggleBaseline - 6;
-    }
-
-    touchToggleThreshold = threshold;
-    Serial.printf("Touch toggle calibrated on GPIO %d: baseline=%u threshold=%u\n",
-                  TOUCH_TOGGLE_PIN, touchToggleBaseline, touchToggleThreshold);
-}
-
-static void pollTouchToggleInput() {
-    if (touchToggleThreshold == 0) return;
-
-    uint16_t raw = touchRead(TOUCH_TOGGLE_PIN);
-    bool touched = raw > 0 && raw < touchToggleThreshold;
-    if (touched) {
-        if (touchToggleArmed && millis() - lastTouchToggleMs >= TOUCH_TOGGLE_COOLDOWN_MS) {
-            touchToggleArmed = false;
-            lastTouchToggleMs = millis();
-            toggleBottomForecastView("Touch");
-        }
-    } else {
-        touchToggleArmed = true;
-    }
 }
 
 static void clearHourlyForecastData() {
@@ -2345,12 +2274,20 @@ bool reconnect() {
 
 // Button Handlers
 void handleButtonClick() {
-    toggleBottomForecastView("Click");
+    if (currentHourlyForecastCount <= 0) {
+        Serial.println("Click: Hourly forecast unavailable, keeping daily view");
+        displayWeatherDashboard(false);
+        return;
+    }
+
+    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
+    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
+    Serial.printf("Click: switched bottom forecast to %s view\n", getBottomForecastViewName(bottomForecastView));
+    displayWeatherDashboard(false); // Full refresh
 }
 
 void handleButtonDoubleClick() {
-    Serial.println("Double Click: Manual sleep triggered");
-    enterDeepSleep();
+    Serial.println("Double Click: Sleep disabled");
 }
 
 void handleButtonLongPress() {
@@ -2391,23 +2328,11 @@ void setup() {
   
   // Load Config
   loadConfig();
-  calibrateTouchToggleInput();
   
-  // Check wakeup reason for Battery Mode
   if (modeState == HIGH) {
-      esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-      if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
-          Serial.println("Wakeup: Timer (Battery Mode). Auto-refresh and sleep.");
-          configMode = false;
-      } else {
-          // Button wakeup, power on, or serial wakeup
-          Serial.println("Wakeup: User/Power-on (Battery Mode). Staying awake for Web UI.");
-          configMode = true;
-          wakeTime = millis();
-      }
+      Serial.println("Mode: Battery. Staying awake.");
   } else {
       Serial.println("Mode: DC Powered. Staying awake.");
-      configMode = true; // Stay awake in DC mode
   }
   
   // Check for low battery at startup
@@ -2687,7 +2612,6 @@ void setup() {
 
 void loop() {
   button.tick();
-  pollTouchToggleInput();
   server.handleClient();
 
   if (bottomForecastView == BOTTOM_VIEW_HOURLY &&
@@ -2779,8 +2703,6 @@ void loop() {
       if (updateWeatherPending || updateEnvPending || updateDatePending) {
           Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
           displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
-          refreshDone = true; // Mark as refreshed for battery mode sleep
-          lastRefreshTime = millis(); // Set timestamp for sleep delay
           updateWeatherPending = false;
           updateEnvPending = false;
           updateDatePending = false;
@@ -2864,86 +2786,4 @@ void loop() {
       }
   }
   lastMinute = currentMinute;
-
-  // Battery Mode Deep Sleep Logic
-  if (digitalRead(MODE_PIN) == HIGH) {
-      // 1. If we are in Config Mode (stay awake for user defined mins)
-      if (configMode) {
-          if (millis() - wakeTime > (unsigned long)config.config_timeout * 60000) {
-              Serial.println("Config mode timeout. Entering sleep...");
-              enterDeepSleep();
-          }
-      } 
-      // 2. If we are NOT in config mode, sleep according to config after refresh is done
-      else {
-          // If at least one refresh has occurred and it's been the configured delay since last refresh
-          if (refreshDone && (millis() - lastRefreshTime > (unsigned long)config.sleep_delay * 1000)) {
-              Serial.println("Update cycle complete. Entering sleep...");
-              enterDeepSleep();
-          }
-          
-          // Failsafe: if we've been awake for more than 2 minutes without refresh, sleep anyway to save battery
-          if (millis() > 120000) { 
-              Serial.println("Failsafe: Awake too long without refresh. Sleeping...");
-              enterDeepSleep();
-          }
-      }
-  }
-}
-
-void enterDeepSleep() {
-    Serial.println("Entering Deep Sleep Mode (Extreme Savings)...");
-    
-    // 0. Disable remaining peripherals to prevent leakage
-    pinMode(LED_PIN, INPUT);
-    pinMode(MODE_PIN, INPUT);
-    pinMode(BYE_SIGNAL_PIN, INPUT);
-    setAdcMeasurementPower(false);
-    pinMode(ADC_SWITCH_EN_PIN, INPUT);
-    if (config.adc_pin >= 0) pinMode(config.adc_pin, INPUT);
-    
-    // 1. Shut down Radio and Wireless
-    if (client.connected()) client.disconnect();
-    WiFi.disconnect(true);
-    WiFi.mode(WIFI_OFF);
-    btStop(); // Stop Bluetooth explicitly
-    
-    // 2. Put EPD to deep sleep and isolate its pins
-    hibernateEPD();
-    
-    // 3. Configure Wakeup Sources
-    // Ext0 Wakeup: BUTTON_PIN (GPIO 0), Active LOW
-    // The ESP32 RTC domain will handle the pull-up internally if configured
-    esp_sleep_enable_ext0_wakeup((gpio_num_t)BUTTON_PIN, 0); 
-    
-    // Timer Wakeup: From Config
-    if (config.request_interval > 0) {
-        uint64_t sleepTime = (uint64_t)config.request_interval * 60 * 1000000ULL;
-        esp_sleep_enable_timer_wakeup(sleepTime);
-        Serial.printf("Timer wakeup scheduled in %d minutes\n", config.request_interval);
-    }
-    
-    // 4. Final power domain optimizations
-    // Optional: Turn off more power domains if not using RTC memory
-    // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
-    // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_OFF);
-    // esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
-
-    // 5. Isolate UART pins to prevent backflow to CH340 or other devices
-    Serial.println("Final UART shutdown...");
-    Serial.flush();
-    Serial2.flush();
-    delay(10);
-    
-    Serial.end();
-    Serial2.end();
-    
-    pinMode(1, INPUT);  // Main TX
-    pinMode(3, INPUT);  // Main RX
-    pinMode(16, INPUT); // Serial2 TX
-    pinMode(17, INPUT); // Serial2 RX
-
-    // 6. Start Sleep
-    delay(100);
-    esp_deep_sleep_start();
 }
