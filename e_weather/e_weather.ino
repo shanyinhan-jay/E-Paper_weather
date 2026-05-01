@@ -10,6 +10,7 @@
 - ADC :34
 - ADC_SWITCH_EN_PIN : 5 // HIGH = enable TPS22860 for battery sensing
 - MODE_PIN : 19 // HIGH = Battery, LOW = DC
+- TOUCH_TOGGLE_PIN : 4 // ESP32 touch pin, toggles daily/hourly bottom view
 - LED_PIN : 2
 - BYE_SIGNAL_PIN : 18 // Low when task finished (Battery Mode only)
 - UNUSED : 4
@@ -142,6 +143,11 @@ int currentHourlyForecastCount = 0;
 BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
 unsigned long hourlyViewActivatedAt = 0;
 const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
+uint16_t touchToggleBaseline = 0;
+uint16_t touchToggleThreshold = 0;
+bool touchToggleArmed = true;
+unsigned long lastTouchToggleMs = 0;
+const unsigned long TOUCH_TOGGLE_COOLDOWN_MS = 800;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -1053,6 +1059,63 @@ static String normalizeWeatherIconCode(const String& rawCode) {
 
 static const char* getBottomForecastViewName(BottomForecastViewMode view) {
     return (view == BOTTOM_VIEW_HOURLY) ? "12-hour" : "daily";
+}
+
+static void toggleBottomForecastView(const char* source) {
+    if (currentHourlyForecastCount <= 0) {
+        Serial.printf("%s: Hourly forecast unavailable, keeping daily view\n", source);
+        displayWeatherDashboard(false);
+        return;
+    }
+
+    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
+    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
+    Serial.printf("%s: switched bottom forecast to %s view\n", source, getBottomForecastViewName(bottomForecastView));
+    displayWeatherDashboard(false);
+}
+
+static void calibrateTouchToggleInput() {
+    uint32_t sum = 0;
+    const int sampleCount = 12;
+    for (int i = 0; i < sampleCount; ++i) {
+        sum += touchRead(TOUCH_TOGGLE_PIN);
+        delay(10);
+    }
+
+    touchToggleBaseline = sum / sampleCount;
+    if (touchToggleBaseline <= 8) {
+        touchToggleThreshold = 0;
+        Serial.printf("Touch toggle on GPIO %d disabled, baseline=%u\n", TOUCH_TOGGLE_PIN, touchToggleBaseline);
+        return;
+    }
+
+    uint16_t threshold = (touchToggleBaseline * 70) / 100;
+    if (threshold >= touchToggleBaseline) {
+        threshold = touchToggleBaseline - 1;
+    }
+    if (touchToggleBaseline - threshold < 6) {
+        threshold = touchToggleBaseline - 6;
+    }
+
+    touchToggleThreshold = threshold;
+    Serial.printf("Touch toggle calibrated on GPIO %d: baseline=%u threshold=%u\n",
+                  TOUCH_TOGGLE_PIN, touchToggleBaseline, touchToggleThreshold);
+}
+
+static void pollTouchToggleInput() {
+    if (touchToggleThreshold == 0) return;
+
+    uint16_t raw = touchRead(TOUCH_TOGGLE_PIN);
+    bool touched = raw > 0 && raw < touchToggleThreshold;
+    if (touched) {
+        if (touchToggleArmed && millis() - lastTouchToggleMs >= TOUCH_TOGGLE_COOLDOWN_MS) {
+            touchToggleArmed = false;
+            lastTouchToggleMs = millis();
+            toggleBottomForecastView("Touch");
+        }
+    } else {
+        touchToggleArmed = true;
+    }
 }
 
 static void clearHourlyForecastData() {
@@ -2282,16 +2345,7 @@ bool reconnect() {
 
 // Button Handlers
 void handleButtonClick() {
-    if (currentHourlyForecastCount <= 0) {
-        Serial.println("Click: Hourly forecast unavailable, keeping daily view");
-        displayWeatherDashboard(false);
-        return;
-    }
-
-    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
-    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
-    Serial.printf("Click: switched bottom forecast to %s view\n", getBottomForecastViewName(bottomForecastView));
-    displayWeatherDashboard(false); // Full refresh
+    toggleBottomForecastView("Click");
 }
 
 void handleButtonDoubleClick() {
@@ -2337,6 +2391,7 @@ void setup() {
   
   // Load Config
   loadConfig();
+  calibrateTouchToggleInput();
   
   // Check wakeup reason for Battery Mode
   if (modeState == HIGH) {
@@ -2632,6 +2687,7 @@ void setup() {
 
 void loop() {
   button.tick();
+  pollTouchToggleInput();
   server.handleClient();
 
   if (bottomForecastView == BOTTOM_VIEW_HOURLY &&
