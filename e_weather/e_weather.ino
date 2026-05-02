@@ -143,6 +143,7 @@ int currentHourlyForecastCount = 0;
 BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
 unsigned long hourlyViewActivatedAt = 0;
 const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
+bool isBatteryModeActive = false;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -1060,6 +1061,10 @@ static void clearHourlyForecastData() {
     currentHourlyForecastCount = 0;
 }
 
+static bool isHourlyForecastEnabled() {
+    return !isBatteryModeActive;
+}
+
 static String extractHourLabel(const String& fxTime) {
     int tIndex = fxTime.indexOf('T');
     if (tIndex >= 0 && tIndex + 5 <= fxTime.length()) {
@@ -1590,7 +1595,9 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
 
         // === 底部预报区：6天 / 12小时 ===
         int startY = 155;
-        if (bottomForecastView == BOTTOM_VIEW_HOURLY && currentHourlyForecastCount > 0) {
+        if (isHourlyForecastEnabled() &&
+            bottomForecastView == BOTTOM_VIEW_HOURLY &&
+            currentHourlyForecastCount > 0) {
             drawHourlyForecastSection(startY);
         } else {
             drawDailyForecastSection(startY);
@@ -1977,6 +1984,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   }
 
   if (strcmp(topic, config.mqtt_hourly_topic) == 0) {
+      if (!isHourlyForecastEnabled()) {
+          Serial.println("Hourly forecast ignored in Battery mode");
+          return;
+      }
       Serial.println("Hourly forecast updated");
 
       JsonDocument doc;
@@ -2207,7 +2218,7 @@ bool reconnect() {
               Serial.println("Subscription failed");
           }
       }
-      if (strlen(config.mqtt_hourly_topic) > 0) {
+      if (isHourlyForecastEnabled() && strlen(config.mqtt_hourly_topic) > 0) {
           if (client.subscribe(config.mqtt_hourly_topic)) {
               Serial.print("Subscribed to: ");
               Serial.println(config.mqtt_hourly_topic);
@@ -2274,6 +2285,14 @@ bool reconnect() {
 
 // Button Handlers
 void handleButtonClick() {
+    if (!isHourlyForecastEnabled()) {
+        bottomForecastView = BOTTOM_VIEW_DAILY;
+        hourlyViewActivatedAt = 0;
+        Serial.println("Click: Hourly forecast disabled in Battery mode, keeping daily view");
+        displayWeatherDashboard(false);
+        return;
+    }
+
     if (currentHourlyForecastCount <= 0) {
         Serial.println("Click: Hourly forecast unavailable, keeping daily view");
         displayWeatherDashboard(false);
@@ -2329,6 +2348,13 @@ void setup() {
   // Load Config
   loadConfig();
   
+  isBatteryModeActive = (modeState == HIGH);
+  if (!isHourlyForecastEnabled()) {
+      bottomForecastView = BOTTOM_VIEW_DAILY;
+      hourlyViewActivatedAt = 0;
+      clearHourlyForecastData();
+  }
+
   if (modeState == HIGH) {
       Serial.println("Mode: Battery. Staying awake.");
   } else {
@@ -2510,7 +2536,9 @@ void setup() {
 
           client.subscribe(config.mqtt_topic);
           client.subscribe(config.mqtt_weather_topic);
-          client.subscribe(config.mqtt_hourly_topic);
+          if (isHourlyForecastEnabled() && strlen(config.mqtt_hourly_topic) > 0) {
+              client.subscribe(config.mqtt_hourly_topic);
+          }
           client.subscribe(config.mqtt_date_topic);
           client.subscribe(config.mqtt_env_topic);
           client.subscribe(config.mqtt_shift_topic);
@@ -2614,7 +2642,8 @@ void loop() {
   button.tick();
   server.handleClient();
 
-  if (bottomForecastView == BOTTOM_VIEW_HOURLY &&
+  if (isHourlyForecastEnabled() &&
+      bottomForecastView == BOTTOM_VIEW_HOURLY &&
       hourlyViewActivatedAt > 0 &&
       millis() - hourlyViewActivatedAt >= HOURLY_VIEW_AUTO_RETURN_MS) {
       bottomForecastView = BOTTOM_VIEW_DAILY;
