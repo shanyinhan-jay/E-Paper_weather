@@ -603,6 +603,17 @@ void publishBatteryVoltage() {
     }
 }
 
+static bool subscribeTopicWithLog(const char* context, const char* label, const char* topic) {
+    if (topic == nullptr || strlen(topic) == 0) {
+        Serial.printf("%s subscribe skipped: %s topic empty\n", context, label);
+        return false;
+    }
+
+    bool ok = client.subscribe(topic);
+    Serial.printf("%s subscribe %s: %s [%s]\n", context, label, topic, ok ? "ok" : "failed");
+    return ok;
+}
+
 void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight) {
     Serial.println("displayMessage start");
     Serial.printf("Free Heap: %u\n", ESP.getFreeHeap());
@@ -1988,6 +1999,17 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
           Serial.println("Hourly forecast ignored in Battery mode");
           return;
       }
+      Serial.printf("Hourly topic message received: %s\n", topic);
+      Serial.printf("Hourly payload length: %u\n", length);
+      {
+          String payloadPreview = "";
+          unsigned int previewLength = (length < 180) ? length : 180;
+          for (unsigned int i = 0; i < previewLength; ++i) {
+              payloadPreview += (char)payload[i];
+          }
+          if (length > previewLength) payloadPreview += "...";
+          Serial.printf("Hourly payload preview: %s\n", payloadPreview.c_str());
+      }
       Serial.println("Hourly forecast updated");
 
       JsonDocument doc;
@@ -2020,6 +2042,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
               if (jsonHasKey(v, "humidity")) currentHourlyForecast[count].humidity = v["humidity"].as<String>();
 
               if (currentHourlyForecast[count].fx_time.length() > 0) {
+                  Serial.printf("Hourly[%d] parsed: fxTime=%s temp=%s icon=%s\n",
+                                count,
+                                currentHourlyForecast[count].fx_time.c_str(),
+                                currentHourlyForecast[count].temp.c_str(),
+                                currentHourlyForecast[count].icon.c_str());
                   count++;
               }
           }
@@ -2490,6 +2517,22 @@ void setup() {
       
       if (mqttConnected) {
           Serial.println("MQTT Connected (Setup)");
+          Serial.printf("MQTT Setup Config: server=%s port=%d\n", config.mqtt_server, config.mqtt_port);
+          Serial.printf("MQTT Setup Topic text: %s\n", config.mqtt_topic);
+          Serial.printf("MQTT Setup Topic weather: %s\n", config.mqtt_weather_topic);
+          Serial.printf("MQTT Setup Topic hourly: %s\n", config.mqtt_hourly_topic);
+          Serial.printf("MQTT Setup Topic date: %s\n", config.mqtt_date_topic);
+          Serial.printf("MQTT Setup Topic env: %s\n", config.mqtt_env_topic);
+          Serial.printf("MQTT Setup Topic shift: %s\n", config.mqtt_shift_topic);
+          Serial.printf("MQTT Setup Topic air_quality: %s\n", config.mqtt_air_quality_topic);
+          Serial.printf("MQTT Setup Topic unified: %s\n", config.mqtt_unified_topic);
+          Serial.printf("MQTT Setup Topic request: %s\n", config.mqtt_request_topic);
+          if (isHourlyForecastEnabled()) {
+              Serial.printf("Startup hourly forecast topic: %s\n",
+                            strlen(config.mqtt_hourly_topic) > 0 ? config.mqtt_hourly_topic : "(empty)");
+          } else {
+              Serial.println("Startup hourly forecast topic: disabled in Battery mode");
+          }
           
           // Disable AP ONLY if it was enabled (optional, but safe)
           if (enableAP) {
@@ -2534,26 +2577,26 @@ void setup() {
               Serial.println(" Timeout (Will retry in background)");
           }
 
-          client.subscribe(config.mqtt_topic);
-          client.subscribe(config.mqtt_weather_topic);
+          subscribeTopicWithLog("Setup", "text", config.mqtt_topic);
+          subscribeTopicWithLog("Setup", "weather", config.mqtt_weather_topic);
           if (isHourlyForecastEnabled() && strlen(config.mqtt_hourly_topic) > 0) {
-              client.subscribe(config.mqtt_hourly_topic);
+              subscribeTopicWithLog("Setup", "hourly", config.mqtt_hourly_topic);
+          } else if (!isHourlyForecastEnabled()) {
+              Serial.printf("Setup subscribe skipped: hourly disabled in %s mode\n",
+                            isBatteryModeActive ? "Battery" : "DC");
+          } else {
+              Serial.println("Setup subscribe skipped: hourly topic empty");
           }
-          client.subscribe(config.mqtt_date_topic);
-          client.subscribe(config.mqtt_env_topic);
-          client.subscribe(config.mqtt_shift_topic);
-          client.subscribe(config.mqtt_air_quality_topic);
-          client.subscribe(config.mqtt_unified_topic); // Add unified topic subscription
+          subscribeTopicWithLog("Setup", "date", config.mqtt_date_topic);
+          subscribeTopicWithLog("Setup", "env", config.mqtt_env_topic);
+          subscribeTopicWithLog("Setup", "shift", config.mqtt_shift_topic);
+          subscribeTopicWithLog("Setup", "air_quality", config.mqtt_air_quality_topic);
+          subscribeTopicWithLog("Setup", "unified", config.mqtt_unified_topic);
           
           client.loop(); // Process incoming messages (e.g. SUBACK)
           delay(100);
 
-          // Send Weather Request on Connect
-          if (client.publish(config.mqtt_request_topic, "get")) {
-              Serial.println("Weather Request sent (Setup)");
-          } else {
-              Serial.println("Weather Request failed (Setup)");
-          }
+          Serial.println("Weather request on startup: disabled");
 
           // Initial battery status publish (moved to after connect & sub)
           publishBatteryVoltage();
@@ -2566,63 +2609,67 @@ void setup() {
 
 
 
-  server.on("/", handleRoot);
-  server.on("/files", handleFileManager);
-  server.on("/setText", handleSetText);
-  server.on("/saveConfig", handleSaveConfig);
-  server.on("/mqtt_config", handleMqttConfig);
-  server.on("/reboot", HTTP_POST, handleReboot);
-  server.on("/update", HTTP_GET, handleUpdate);
-  server.on("/update", HTTP_POST, []() {
-      server.sendHeader("Connection", "close");
-      if (Update.hasError()) {
-          server.send(500, "text/plain", "Update Failed");
-      } else {
-          server.send(200, "text/html", "Update Success. Rebooting...");
-          delay(1000);
-          ESP.restart();
+  if (!isBatteryModeActive) {
+      server.on("/", handleRoot);
+      server.on("/files", handleFileManager);
+      server.on("/setText", handleSetText);
+      server.on("/saveConfig", handleSaveConfig);
+      server.on("/mqtt_config", handleMqttConfig);
+      server.on("/reboot", HTTP_POST, handleReboot);
+      server.on("/update", HTTP_GET, handleUpdate);
+      server.on("/update", HTTP_POST, []() {
+          server.sendHeader("Connection", "close");
+          if (Update.hasError()) {
+              server.send(500, "text/plain", "Update Failed");
+          } else {
+              server.send(200, "text/html", "Update Success. Rebooting...");
+              delay(1000);
+              ESP.restart();
+          }
+      }, handleUpdateFirmware);
+      server.on("/upload", HTTP_POST, [](){ server.send(200, "text/plain", ""); }, handleUpload);
+      // handleDisplayImage route removed
+      server.on("/delete", handleDelete);
+      server.begin();
+      
+      printf("HTTP server started\r\n");
+
+      // Setup OTA
+      const char* hostName = (strlen(config.device_name) > 0) ? config.device_name : "EPD-Display";
+      ArduinoOTA.setHostname(hostName);
+      
+      if (MDNS.begin(hostName)) {
+          Serial.printf("mDNS responder started: http://%s.local\n", hostName);
+          MDNS.addService("http", "tcp", 80);
       }
-  }, handleUpdateFirmware);
-  server.on("/upload", HTTP_POST, [](){ server.send(200, "text/plain", ""); }, handleUpload);
-  // handleDisplayImage route removed
-  server.on("/delete", handleDelete);
-  server.begin();
-  
-  printf("HTTP server started\r\n");
 
-  // Setup OTA
-  const char* hostName = (strlen(config.device_name) > 0) ? config.device_name : "EPD-Display";
-  ArduinoOTA.setHostname(hostName);
-  
-  if (MDNS.begin(hostName)) {
-      Serial.printf("mDNS responder started: http://%s.local\n", hostName);
-      MDNS.addService("http", "tcp", 80);
+      ArduinoOTA.onStart([]() {
+        String type;
+        if (ArduinoOTA.getCommand() == U_FLASH)
+          type = "sketch";
+        else // U_SPIFFS
+          type = "filesystem";
+        Serial.println("Start updating " + type);
+        displayMessage("OTA Updating...");
+      });
+      ArduinoOTA.onEnd([]() {
+        Serial.println("\nEnd");
+      });
+      ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+        Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+      });
+      ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("Error[%u]: ", error);
+        if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
+        else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
+        else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
+        else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
+        else if (error == OTA_END_ERROR) Serial.println("End Failed");
+      });
+      ArduinoOTA.begin();
+  } else {
+      Serial.println("Battery mode: HTTP server, ArduinoOTA and mDNS disabled");
   }
-
-  ArduinoOTA.onStart([]() {
-    String type;
-    if (ArduinoOTA.getCommand() == U_FLASH)
-      type = "sketch";
-    else // U_SPIFFS
-      type = "filesystem";
-    Serial.println("Start updating " + type);
-    displayMessage("OTA Updating...");
-  });
-  ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
-  });
-  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
-  });
-  ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
-  });
-  ArduinoOTA.begin();
 
   // Setup Button
   button.attachClick(handleButtonClick);
@@ -2640,7 +2687,9 @@ void setup() {
 
 void loop() {
   button.tick();
-  server.handleClient();
+  if (!isBatteryModeActive) {
+      server.handleClient();
+  }
 
   if (isHourlyForecastEnabled() &&
       bottomForecastView == BOTTOM_VIEW_HOURLY &&
@@ -2691,7 +2740,9 @@ void loop() {
       // Do NOT return here, allow server.handleClient() to run in loop
   }
 
-  ArduinoOTA.handle();
+  if (!isBatteryModeActive) {
+      ArduinoOTA.handle();
+  }
 
   if (strlen(config.mqtt_server) > 0 && WiFi.status() == WL_CONNECTED) {
       if (!client.connected()) {

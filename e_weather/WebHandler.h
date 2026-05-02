@@ -243,7 +243,7 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <input type='text' name='static_dns' value='%STATIC_DNS%' placeholder="DNS Server">
         </div>
         
-        <h3>Refresh & Sleep Settings</h3>
+        <h3>Refresh Settings</h3>
         <div class="grid-2-col">
             <div>
                 <label>Full Refresh (min)</label>
@@ -252,14 +252,6 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <div>
                 <label>Request (min)</label>
                 <input type='number' name='request_interval' value='%REQUEST_INTERVAL%' placeholder="0 = Disabled">
-            </div>
-            <div>
-                <label>Sleep Delay (sec)</label>
-                <input type='number' name='sleep_delay' value='%SLEEP_DELAY%' placeholder="Default 10s">
-            </div>
-            <div>
-                <label>Manual Wakeup Delay (min)</label>
-                <input type='number' name='config_timeout' value='%CONFIG_TIMEOUT%' placeholder="Default 5m">
             </div>
         </div>
 
