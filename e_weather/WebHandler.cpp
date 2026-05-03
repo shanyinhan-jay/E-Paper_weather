@@ -34,6 +34,7 @@ void handleRoot() {
   html.replace("%MQTT_PORT%", String(config.mqtt_port));
   html.replace("%MQTT_USER%", String(config.mqtt_user));
   html.replace("%MQTT_PASS%", String(config.mqtt_pass));
+  html.replace("%MQTT_PROTOCOL_CHECKED%", config.mqtt_protocol == 1 ? "checked" : "");
   html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
   html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
   html.replace("%MQTT_HOURLY%", String(config.mqtt_hourly_topic));
@@ -210,6 +211,9 @@ void handleSaveConfig() {
   if (server.hasArg("device_name")) strlcpy(config.device_name, server.arg("device_name").c_str(), sizeof(config.device_name));
   if (server.hasArg("mqtt_server")) strlcpy(config.mqtt_server, server.arg("mqtt_server").c_str(), sizeof(config.mqtt_server));
   if (server.hasArg("mqtt_port")) config.mqtt_port = server.arg("mqtt_port").toInt();
+  if (server.hasArg("mqtt_server") || server.hasArg("mqtt_port") || server.hasArg("mqtt_user") || server.hasArg("mqtt_pass")) {
+    config.mqtt_protocol = server.hasArg("mqtt_protocol") ? 1 : 0;
+  }
   if (server.hasArg("mqtt_user")) strlcpy(config.mqtt_user, server.arg("mqtt_user").c_str(), sizeof(config.mqtt_user));
   if (server.hasArg("mqtt_pass")) strlcpy(config.mqtt_pass, server.arg("mqtt_pass").c_str(), sizeof(config.mqtt_pass));
   if (server.hasArg("mqtt_topic")) strlcpy(config.mqtt_topic, server.arg("mqtt_topic").c_str(), sizeof(config.mqtt_topic));

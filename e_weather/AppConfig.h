@@ -11,6 +11,7 @@ struct Config {
   char device_name[32] = "EPD-Display";
   char mqtt_server[64] = "broker.emqx.io";
   int  mqtt_port = 1883;
+  int  mqtt_protocol = 0; // 0 = MQTT, 1 = MQTT over TLS / MQTTS
   char mqtt_user[32] = "";
   char mqtt_pass[32] = "";
   char mqtt_topic[64] = "shanyinhan/epd/text";

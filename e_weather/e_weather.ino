@@ -23,6 +23,7 @@
 #include "GUI_Paint.h"
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <LittleFS.h>
 
@@ -76,7 +77,8 @@ const char* build_time = __TIME__;
 WebServer server(80);
 
 WiFiClient espClient;
-PubSubClient client(espClient);
+WiFiClientSecure espClientSecure;
+PubSubClient client;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP); 
 UBYTE *BlackImage = NULL;
@@ -88,6 +90,8 @@ String ap_ssid = DEFAULT_AP_SSID_BASE;
 #define MAX_SHIFT_EVENTS 100
 
 Config config;
+
+void mqttCallback(char* topic, byte* payload, unsigned int length);
 
 enum DisplayDriverType : uint8_t {
     DISPLAY_DRIVER_LOCAL = 0,
@@ -271,6 +275,33 @@ static const char* getDriverName(int driver) {
     return "Unknown";
 }
 
+static int normalizeMqttProtocol(int protocol) {
+    return (protocol == 1) ? 1 : 0;
+}
+
+static const char* getMqttProtocolName(int protocol) {
+    return (normalizeMqttProtocol(protocol) == 1) ? "MQTT over TLS / MQTTS" : "MQTT";
+}
+
+static bool isMqttTlsEnabled() {
+    return normalizeMqttProtocol(config.mqtt_protocol) == 1;
+}
+
+static void applyMqttTransportConfig() {
+    config.mqtt_protocol = normalizeMqttProtocol(config.mqtt_protocol);
+
+    if (isMqttTlsEnabled()) {
+        espClientSecure.setInsecure();
+        client.setClient(espClientSecure);
+    } else {
+        client.setClient(espClient);
+    }
+
+    client.setServer(config.mqtt_server, config.mqtt_port);
+    client.setCallback(mqttCallback);
+    client.setBufferSize(4096);
+}
+
 static bool ensureLittleFSReady() {
     if (littlefsReady) return true;
 
@@ -438,6 +469,7 @@ void loadConfig() {
           strlcpy(config.device_name, doc["device_name"] | "EPD-Display", sizeof(config.device_name));
           strlcpy(config.mqtt_server, doc["mqtt_server"] | "", sizeof(config.mqtt_server));
           config.mqtt_port = doc["mqtt_port"] | 1883;
+          config.mqtt_protocol = normalizeMqttProtocol(doc["mqtt_protocol"] | 0);
           strlcpy(config.mqtt_user, doc["mqtt_user"] | "", sizeof(config.mqtt_user));
           strlcpy(config.mqtt_pass, doc["mqtt_pass"] | "", sizeof(config.mqtt_pass));
           strlcpy(config.mqtt_topic, doc["mqtt_topic"] | "epd/text", sizeof(config.mqtt_topic));
@@ -513,6 +545,7 @@ void saveConfig() {
   doc["device_name"] = config.device_name;
   doc["mqtt_server"] = config.mqtt_server;
   doc["mqtt_port"] = config.mqtt_port;
+  doc["mqtt_protocol"] = normalizeMqttProtocol(config.mqtt_protocol);
   doc["mqtt_user"] = config.mqtt_user;
   doc["mqtt_pass"] = config.mqtt_pass;
   doc["mqtt_topic"] = config.mqtt_topic;
@@ -2223,7 +2256,8 @@ bool reconnect() {
   if (strlen(config.mqtt_server) == 0) return false;
   
   if (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
+    applyMqttTransportConfig();
+    Serial.printf("Attempting MQTT connection using %s...\n", getMqttProtocolName(config.mqtt_protocol));
     String clientId = "ESP32Client-";
     clientId += String(random(0xffff), HEX);
     
@@ -2496,9 +2530,8 @@ void setup() {
   
   // Setup MQTT
   if (strlen(config.mqtt_server) > 0 && WiFi.status() == WL_CONNECTED) {
-      client.setServer(config.mqtt_server, config.mqtt_port);
-      client.setCallback(mqttCallback);
-      client.setBufferSize(4096); // Increase buffer for large JSON
+      applyMqttTransportConfig();
+      Serial.printf("MQTT transport selected: %s\n", getMqttProtocolName(config.mqtt_protocol));
       
       // Attempt connection
       String clientId = "ESP32Client-";
@@ -2507,7 +2540,12 @@ void setup() {
       int mqttRetry = 0;
       bool mqttConnected = false;
       while (mqttRetry < 30 && !mqttConnected) { // 15 seconds
-          if (client.connect(clientId.c_str(), config.mqtt_user, config.mqtt_pass)) {
+          if (strlen(config.mqtt_user) > 0) {
+              mqttConnected = client.connect(clientId.c_str(), config.mqtt_user, config.mqtt_pass);
+          } else {
+              mqttConnected = client.connect(clientId.c_str());
+          }
+          if (mqttConnected) {
               mqttConnected = true;
           } else {
               delay(500);
@@ -2517,7 +2555,10 @@ void setup() {
       
       if (mqttConnected) {
           Serial.println("MQTT Connected (Setup)");
-          Serial.printf("MQTT Setup Config: server=%s port=%d\n", config.mqtt_server, config.mqtt_port);
+          Serial.printf("MQTT Setup Config: protocol=%s server=%s port=%d\n",
+                        getMqttProtocolName(config.mqtt_protocol),
+                        config.mqtt_server,
+                        config.mqtt_port);
           Serial.printf("MQTT Setup Topic text: %s\n", config.mqtt_topic);
           Serial.printf("MQTT Setup Topic weather: %s\n", config.mqtt_weather_topic);
           Serial.printf("MQTT Setup Topic hourly: %s\n", config.mqtt_hourly_topic);

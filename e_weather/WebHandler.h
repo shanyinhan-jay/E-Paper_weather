@@ -55,7 +55,7 @@ const char COMMON_CSS[] PROGMEM = R"css(
   h2 { font-size: 1.25rem; margin-top: 0; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
   h3 { font-size: 1rem; margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
   
-  input[type=text], input[type=number], input[type=password], input[type=file] {
+  input[type=text], input[type=number], input[type=password], input[type=file], select {
     width: 100%;
     padding: 10px;
     margin: 5px 0 15px;
@@ -65,7 +65,7 @@ const char COMMON_CSS[] PROGMEM = R"css(
     font-size: 14px;
     transition: border-color 0.2s;
   }
-  input[type=text]:focus, input[type=number]:focus, input[type=password]:focus {
+  input[type=text]:focus, input[type=number]:focus, input[type=password]:focus, select:focus {
     outline: none;
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
@@ -262,6 +262,10 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             <input type='text' name='mqtt_user' value='%MQTT_USER%' placeholder="User (Optional)">
             <input type='password' name='mqtt_pass' value='%MQTT_PASS%' placeholder="Password (Optional)">
         </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin:12px 0 4px;">
+            <input type="checkbox" name="mqtt_protocol" value="1" %MQTT_PROTOCOL_CHECKED% style="width:auto;margin:0;">
+            Use MQTT over TLS / MQTTS
+        </label>
 
         <a href="/mqtt_config" class="btn-group" style="display:block; text-align:center; background:#2563eb; color:white; padding:10px; border-radius:6px; margin:15px 0;">Configure MQTT Topics</a>
 
