@@ -29,22 +29,14 @@ void handleRoot() {
   html.replace("%CSS%", COMMON_CSS);
   html.replace("%WIFI_SSID%", String(config.wifi_ssid));
   html.replace("%WIFI_PASS%", String(config.wifi_pass));
-  html.replace("%DEVICE_NAME%", String(config.device_name));
   html.replace("%MQTT_SERVER%", String(config.mqtt_server));
   html.replace("%MQTT_PORT%", String(config.mqtt_port));
   html.replace("%MQTT_USER%", String(config.mqtt_user));
   html.replace("%MQTT_PASS%", String(config.mqtt_pass));
   html.replace("%MQTT_PROTOCOL_CHECKED%", config.mqtt_protocol == 1 ? "checked" : "");
-  html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
-  html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
   html.replace("%MQTT_HOURLY%", String(config.mqtt_hourly_topic));
   html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
-  html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
-  html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
-  html.replace("%MQTT_SHIFT%", String(config.mqtt_shift_topic));
-  html.replace("%MQTT_AQI%", String(config.mqtt_air_quality_topic));
   html.replace("%MQTT_UNIFIED%", String(config.mqtt_unified_topic));
-  html.replace("%MQTT_REQUEST%", String(config.mqtt_request_topic));
   html.replace("%NTP_SERVER%", String(config.ntp_server));
   html.replace("%NTP_SERVER_2%", String(config.ntp_server_2));
   html.replace("%FULL_REFRESH%", String(config.full_refresh_period));
@@ -87,16 +79,9 @@ void handleMqttConfig() {
   String html = MQTT_CONFIG_HTML_TEMPLATE;
   html.replace("%CSS%", COMMON_CSS);
   
-  html.replace("%MQTT_TOPIC%", String(config.mqtt_topic));
-  html.replace("%MQTT_WEATHER%", String(config.mqtt_weather_topic));
   html.replace("%MQTT_HOURLY%", String(config.mqtt_hourly_topic));
   html.replace("%MQTT_BATTERY%", String(config.mqtt_battery_topic));
-  html.replace("%MQTT_DATE%", String(config.mqtt_date_topic));
-  html.replace("%MQTT_ENV%", String(config.mqtt_env_topic));
-  html.replace("%MQTT_SHIFT%", String(config.mqtt_shift_topic));
-  html.replace("%MQTT_AQI%", String(config.mqtt_air_quality_topic));
   html.replace("%MQTT_UNIFIED%", String(config.mqtt_unified_topic));
-  html.replace("%MQTT_REQUEST%", String(config.mqtt_request_topic));
   
   server.send(200, "text/html", html);
 }
@@ -244,7 +229,6 @@ void handleReboot() {
 void handleSaveConfig() {
   if (server.hasArg("wifi_ssid")) strlcpy(config.wifi_ssid, server.arg("wifi_ssid").c_str(), sizeof(config.wifi_ssid));
   if (server.hasArg("wifi_pass")) strlcpy(config.wifi_pass, server.arg("wifi_pass").c_str(), sizeof(config.wifi_pass));
-  if (server.hasArg("device_name")) strlcpy(config.device_name, server.arg("device_name").c_str(), sizeof(config.device_name));
   if (server.hasArg("mqtt_server")) strlcpy(config.mqtt_server, server.arg("mqtt_server").c_str(), sizeof(config.mqtt_server));
   if (server.hasArg("mqtt_port")) config.mqtt_port = server.arg("mqtt_port").toInt();
   if (server.hasArg("mqtt_server") || server.hasArg("mqtt_port") || server.hasArg("mqtt_user") || server.hasArg("mqtt_pass")) {
@@ -252,16 +236,9 @@ void handleSaveConfig() {
   }
   if (server.hasArg("mqtt_user")) strlcpy(config.mqtt_user, server.arg("mqtt_user").c_str(), sizeof(config.mqtt_user));
   if (server.hasArg("mqtt_pass")) strlcpy(config.mqtt_pass, server.arg("mqtt_pass").c_str(), sizeof(config.mqtt_pass));
-  if (server.hasArg("mqtt_topic")) strlcpy(config.mqtt_topic, server.arg("mqtt_topic").c_str(), sizeof(config.mqtt_topic));
-  if (server.hasArg("mqtt_weather_topic")) strlcpy(config.mqtt_weather_topic, server.arg("mqtt_weather_topic").c_str(), sizeof(config.mqtt_weather_topic));
   if (server.hasArg("mqtt_hourly_topic")) strlcpy(config.mqtt_hourly_topic, server.arg("mqtt_hourly_topic").c_str(), sizeof(config.mqtt_hourly_topic));
-  if (server.hasArg("mqtt_date_topic")) strlcpy(config.mqtt_date_topic, server.arg("mqtt_date_topic").c_str(), sizeof(config.mqtt_date_topic));
-  if (server.hasArg("mqtt_env_topic")) strlcpy(config.mqtt_env_topic, server.arg("mqtt_env_topic").c_str(), sizeof(config.mqtt_env_topic));
-  if (server.hasArg("mqtt_shift_topic")) strlcpy(config.mqtt_shift_topic, server.arg("mqtt_shift_topic").c_str(), sizeof(config.mqtt_shift_topic));
-  if (server.hasArg("mqtt_air_quality_topic")) strlcpy(config.mqtt_air_quality_topic, server.arg("mqtt_air_quality_topic").c_str(), sizeof(config.mqtt_air_quality_topic));
   if (server.hasArg("mqtt_battery_topic")) strlcpy(config.mqtt_battery_topic, server.arg("mqtt_battery_topic").c_str(), sizeof(config.mqtt_battery_topic));
   if (server.hasArg("mqtt_unified_topic")) strlcpy(config.mqtt_unified_topic, server.arg("mqtt_unified_topic").c_str(), sizeof(config.mqtt_unified_topic));
-  if (server.hasArg("mqtt_request_topic")) strlcpy(config.mqtt_request_topic, server.arg("mqtt_request_topic").c_str(), sizeof(config.mqtt_request_topic));
   if (server.hasArg("ntp_server")) strlcpy(config.ntp_server, server.arg("ntp_server").c_str(), sizeof(config.ntp_server));
   if (server.hasArg("ntp_server_2")) strlcpy(config.ntp_server_2, server.arg("ntp_server_2").c_str(), sizeof(config.ntp_server_2));
   if (server.hasArg("full_refresh_period")) config.full_refresh_period = server.arg("full_refresh_period").toInt();
@@ -287,14 +264,4 @@ void handleSaveConfig() {
   saveConfig();
   
   server.send(200, "text/plain", "OK");
-}
-
-void handleSetText() {
-  if (server.hasArg("text")) {
-    String text = server.arg("text");
-    server.send(200, "text/plain", "Displaying: " + text);
-    displayMessage(text);
-  } else {
-    server.send(400, "text/plain", "Missing text argument");
-  }
 }

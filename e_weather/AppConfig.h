@@ -8,26 +8,18 @@
 struct Config {
   char wifi_ssid[32] = "Linksys-2.4G-wifi5";
   char wifi_pass[32] = "19811201";
-  char device_name[32] = "EPD-Display";
   char mqtt_server[64] = "broker.emqx.io";
   int  mqtt_port = 1883;
   int  mqtt_protocol = 0; // 0 = MQTT, 1 = MQTT over TLS / MQTTS
   char mqtt_user[32] = "";
   char mqtt_pass[32] = "";
-  char mqtt_topic[64] = "shanyinhan/epd/text";
-  char mqtt_weather_topic[64] = "shanyinhan/epd/weather";
   char mqtt_hourly_topic[64] = "shanyinhan/epd/hourly";
-  char mqtt_date_topic[64] = "shanyinhan/epd/date";
-  char mqtt_env_topic[64] = "shanyinhan/epd/env";
-  char mqtt_shift_topic[64] = "shanyinhan/epd/shift";
-  char mqtt_air_quality_topic[64] = "shanyinhan/epd/air_quality";
   char mqtt_battery_topic[64] = "shanyinhan/epd/battery";
-  char mqtt_unified_topic[64] = "shanyinhan/epd/unified"; // New unified topic
-  char mqtt_request_topic[64] = "shanyinhan/epd/weatherrequest"; // New request topic
+  char mqtt_unified_topic[64] = "shanyinhan/epd/unified";
   char ntp_server[64] = "ntp.aliyun.com";
   char ntp_server_2[64] = "ntp.tencent.com";
   int full_refresh_period = 10; // minutes, 0 = disabled
-  int request_interval = 30; // minutes, 0 = disabled
+  int request_interval = 30; // minutes, 0 = periodic battery publish disabled
   int day_start_hour = 6;
   int day_end_hour = 18;
   bool invert_display = false;

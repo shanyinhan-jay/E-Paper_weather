@@ -14,7 +14,6 @@ extern const char* build_time;
 extern void saveConfig();
 extern void handleMqttConfig();
 extern float getBatteryVoltage();
-extern void displayMessage(String text);
 extern void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight);
 extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
 extern bool webOtaInProgress;
@@ -57,9 +56,9 @@ const char COMMON_CSS[] PROGMEM = R"css(
     padding: 20px;
     margin-bottom: 20px;
   }
-  h1 { font-size: 1.5rem; margin-bottom: 1rem; color: var(--text); }
-  h2 { font-size: 1.25rem; margin-top: 0; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
-  h3 { font-size: 1rem; margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+  h1 { font-size: 1.5rem; margin-bottom: 1rem; color: var(--text); text-align: center; }
+  h2 { font-size: 1.25rem; margin-top: 0; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); text-align: center; }
+  h3 { font-size: 1rem; margin-top: 1rem; margin-bottom: 0.5rem; color: var(--text-light); text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; text-align: center; }
   
   input[type=text], input[type=number], input[type=password], input[type=file], select {
     width: 100%;
@@ -176,16 +175,6 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
     </div>
 
     <div class="card">
-      <h2>Display Control</h2>
-      <form action='/setText' method='POST'>
-        <h3>Direct Text</h3>
-        <input type='text' name='text' placeholder='Enter text to display...'>
-        <input type='submit' value='Display Text'>
-      </form>
-    </div>
-    
-    <div class="card">
-      <h2>Configuration</h2>
       <form action='/saveConfig' method='POST' onsubmit='return submitConfig(event, this);'>
         <h3>Display Mode</h3>
         <div class="grid-2-col">
@@ -222,14 +211,10 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
             </div>
         </div>
 
-        <h3>WiFi & Device</h3>
+        <h3>WiFi</h3>
         <div class="grid-2-col">
             <input type='text' name='wifi_ssid' value='%WIFI_SSID%' placeholder="SSID">
             <input type='password' name='wifi_pass' value='%WIFI_PASS%' placeholder="Password">
-        </div>
-        <div>
-            <label>Device Name (for AP & mDNS)</label>
-            <input type='text' name='device_name' value='%DEVICE_NAME%' placeholder="EPD-Display">
         </div>
 
         <h3>NTP Servers</h3>
@@ -256,7 +241,7 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
                 <input type='number' name='full_refresh_period' value='%FULL_REFRESH%' placeholder="0 = Disabled">
             </div>
             <div>
-                <label>Request (min)</label>
+                <label>Battery Publish (min)</label>
                 <input type='number' name='request_interval' value='%REQUEST_INTERVAL%' placeholder="0 = Disabled">
             </div>
         </div>
@@ -387,29 +372,8 @@ const char MQTT_CONFIG_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
         <h3>Battery Voltage Topic</h3>
         <input type='text' name='mqtt_battery_topic' value='%MQTT_BATTERY%' placeholder="epd/battery">
 
-        <h3>Weather Topic</h3>
-        <input type='text' name='mqtt_weather_topic' value='%MQTT_WEATHER%' placeholder="epd/weather">
-
         <h3>Hourly Forecast Topic</h3>
         <input type='text' name='mqtt_hourly_topic' value='%MQTT_HOURLY%' placeholder="epd/hourly">
-
-        <h3>Date/Calendar Topic</h3>
-        <input type='text' name='mqtt_date_topic' value='%MQTT_DATE%' placeholder="epd/date">
-
-        <h3>Environment Topic</h3>
-        <input type='text' name='mqtt_env_topic' value='%MQTT_ENV%' placeholder="epd/env">
-
-        <h3>Air Quality Topic</h3>
-        <input type='text' name='mqtt_air_quality_topic' value='%MQTT_AQI%' placeholder="epd/air_quality">
-
-        <h3>Shift Schedule Topic</h3>
-        <input type='text' name='mqtt_shift_topic' value='%MQTT_SHIFT%' placeholder="epd/shift">
-
-        <h3>Text Message Topic</h3>
-        <input type='text' name='mqtt_topic' value='%MQTT_TOPIC%' placeholder="epd/text">
-
-        <h3>Periodic Request Topic</h3>
-        <input type='text' name='mqtt_request_topic' value='%MQTT_REQUEST%' placeholder="epd/weatherrequest">
 
         <div class="btn-group" style="display: flex; gap: 10px;">
             <button type="button" onclick="window.location.href='/'" style="background:#6b7280; flex:1; padding:12px; font-size:16px;">Cancel</button>
@@ -434,7 +398,6 @@ void handleUpload();
 void handleDelete();
 void handleReboot();
 void handleSaveConfig();
-void handleSetText();
 void handleUpdate();
 void handleUpdateFirmware();
 

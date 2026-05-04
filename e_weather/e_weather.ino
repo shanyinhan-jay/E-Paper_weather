@@ -87,8 +87,6 @@ OneButton button(BUTTON_PIN, true); // GPIO defined in DEV_Config.h, Active Low
 const char* DEFAULT_AP_SSID_BASE = "EPD-Display";
 String ap_ssid = DEFAULT_AP_SSID_BASE;
 
-#define MAX_SHIFT_EVENTS 100
-
 Config config;
 
 void mqttCallback(char* topic, byte* payload, unsigned int length);
@@ -104,13 +102,6 @@ GxEPD2_2IC_BW<GxEPD2_2IC_420_A03, GxEPD2_2IC_420_A03::HEIGHT> gxDisplay(
     GxEPD2_2IC_420_A03(EPD_CS_PIN, EPD_CS1_PIN, EPD_DC_PIN, EPD_RST_PIN, EPD_BUSY_PIN)
 );
 #endif
-
-struct ShiftEvent {
-    int year;
-    int month;
-    int day;
-    String content;
-};
 
 struct WeatherData {
     String date;
@@ -139,7 +130,6 @@ enum BottomForecastViewMode : uint8_t {
 };
 
 // Global Weather Data
-std::vector<ShiftEvent> shiftEvents;
 WeatherData currentForecast[7];
 int currentForecastCount = 0;
 HourlyWeatherData currentHourlyForecast[12];
@@ -272,6 +262,14 @@ bool webOtaHasError = false;
 size_t webOtaBytesWritten = 0;
 unsigned long webOtaStartMillis = 0;
 static unsigned long lastWiFiReconnectAttempt = 0;
+static IPAddress mqttResolvedServerIp;
+static bool mqttServerIpValid = false;
+static char mqttResolvedServerHost[64] = "";
+
+static const uint16_t MQTT_SOCKET_TIMEOUT_SECONDS = 5;
+static const uint16_t MQTT_TCP_TIMEOUT_MS = 5000;
+static const uint16_t MQTT_TLS_HANDSHAKE_TIMEOUT_SECONDS = 5;
+static const uint32_t WIFI_SCAN_MAX_MS_PER_CHANNEL = 120;
 
 static inline bool jsonHasKey(const JsonVariantConst& obj, const char* key) {
   return !obj[key].isNull();
@@ -296,19 +294,75 @@ static bool isMqttTlsEnabled() {
     return normalizeMqttProtocol(config.mqtt_protocol) == 1;
 }
 
+static bool resolveMqttServer(IPAddress& resolvedIp, bool forceRefresh = false) {
+    if (strlen(config.mqtt_server) == 0) return false;
+
+    IPAddress directIp;
+    if (directIp.fromString(config.mqtt_server)) {
+        resolvedIp = directIp;
+        mqttResolvedServerIp = directIp;
+        mqttServerIpValid = true;
+        strlcpy(mqttResolvedServerHost, config.mqtt_server, sizeof(mqttResolvedServerHost));
+        Serial.printf("MQTT broker uses direct IP: %s\n", resolvedIp.toString().c_str());
+        return true;
+    }
+
+    if (!forceRefresh &&
+        mqttServerIpValid &&
+        strcmp(mqttResolvedServerHost, config.mqtt_server) == 0) {
+        resolvedIp = mqttResolvedServerIp;
+        Serial.printf("MQTT DNS cache hit: %s -> %s\n",
+                      config.mqtt_server,
+                      resolvedIp.toString().c_str());
+        return true;
+    }
+
+    unsigned long dnsStart = millis();
+    IPAddress dnsIp;
+    bool ok = WiFi.hostByName(config.mqtt_server, dnsIp);
+    unsigned long dnsElapsed = millis() - dnsStart;
+    if (!ok) {
+        mqttServerIpValid = false;
+        mqttResolvedServerHost[0] = '\0';
+        Serial.printf("MQTT DNS resolve failed: %s (%lu ms)\n", config.mqtt_server, dnsElapsed);
+        return false;
+    }
+
+    mqttResolvedServerIp = dnsIp;
+    mqttServerIpValid = true;
+    strlcpy(mqttResolvedServerHost, config.mqtt_server, sizeof(mqttResolvedServerHost));
+    resolvedIp = dnsIp;
+    Serial.printf("MQTT DNS resolved: %s -> %s (%lu ms)\n",
+                  config.mqtt_server,
+                  resolvedIp.toString().c_str(),
+                  dnsElapsed);
+    return true;
+}
+
 static void applyMqttTransportConfig() {
     config.mqtt_protocol = normalizeMqttProtocol(config.mqtt_protocol);
 
+    IPAddress resolvedIp;
+    bool hasResolvedIp = resolveMqttServer(resolvedIp);
+
     if (isMqttTlsEnabled()) {
         espClientSecure.setInsecure();
+        espClientSecure.setTimeout(MQTT_TCP_TIMEOUT_MS);
+        espClientSecure.setHandshakeTimeout(MQTT_TLS_HANDSHAKE_TIMEOUT_SECONDS);
         client.setClient(espClientSecure);
     } else {
+        espClient.setTimeout(MQTT_TCP_TIMEOUT_MS);
         client.setClient(espClient);
     }
 
-    client.setServer(config.mqtt_server, config.mqtt_port);
+    if (hasResolvedIp) {
+        client.setServer(resolvedIp, config.mqtt_port);
+    } else {
+        client.setServer(config.mqtt_server, config.mqtt_port);
+    }
     client.setCallback(mqttCallback);
     client.setBufferSize(4096);
+    client.setSocketTimeout(MQTT_SOCKET_TIMEOUT_SECONDS);
 }
 
 static String formatBssid(const uint8_t* bssid) {
@@ -367,14 +421,16 @@ static bool scanBestWiFiCandidate(const char* targetSsid, int32_t& bestChannel, 
     memset(bestBssid, 0, 6);
 
     Serial.printf("WiFi scan start for SSID: %s\n", targetSsid);
-    int networkCount = WiFi.scanNetworks(false, true);
+    unsigned long scanStart = millis();
+    int networkCount = WiFi.scanNetworks(false, false, false, WIFI_SCAN_MAX_MS_PER_CHANNEL, 0, targetSsid);
+    unsigned long scanElapsed = millis() - scanStart;
     if (networkCount < 0) {
-        Serial.printf("WiFi scan failed: %d\n", networkCount);
+        Serial.printf("WiFi scan failed: %d (%lu ms)\n", networkCount, scanElapsed);
         WiFi.scanDelete();
         return false;
     }
 
-    Serial.printf("WiFi scan found %d network(s)\n", networkCount);
+    Serial.printf("WiFi scan found %d network(s) in %lu ms\n", networkCount, scanElapsed);
     for (int i = 0; i < networkCount; ++i) {
         String scannedSsid = WiFi.SSID(i);
         if (scannedSsid != targetSsid) continue;
@@ -615,22 +671,14 @@ void loadConfig() {
         if (!error) {
           strlcpy(config.wifi_ssid, doc["wifi_ssid"] | "", sizeof(config.wifi_ssid));
           strlcpy(config.wifi_pass, doc["wifi_pass"] | "", sizeof(config.wifi_pass));
-          strlcpy(config.device_name, doc["device_name"] | "EPD-Display", sizeof(config.device_name));
           strlcpy(config.mqtt_server, doc["mqtt_server"] | "", sizeof(config.mqtt_server));
           config.mqtt_port = doc["mqtt_port"] | 1883;
           config.mqtt_protocol = normalizeMqttProtocol(doc["mqtt_protocol"] | 0);
           strlcpy(config.mqtt_user, doc["mqtt_user"] | "", sizeof(config.mqtt_user));
           strlcpy(config.mqtt_pass, doc["mqtt_pass"] | "", sizeof(config.mqtt_pass));
-          strlcpy(config.mqtt_topic, doc["mqtt_topic"] | "epd/text", sizeof(config.mqtt_topic));
-          strlcpy(config.mqtt_weather_topic, doc["mqtt_weather_topic"] | "epd/weather", sizeof(config.mqtt_weather_topic));
           strlcpy(config.mqtt_hourly_topic, doc["mqtt_hourly_topic"] | "shanyinhan/epd/hourly", sizeof(config.mqtt_hourly_topic));
-          strlcpy(config.mqtt_date_topic, doc["mqtt_date_topic"] | "epd/date", sizeof(config.mqtt_date_topic));
-          strlcpy(config.mqtt_env_topic, doc["mqtt_env_topic"] | "epd/env", sizeof(config.mqtt_env_topic));
-          strlcpy(config.mqtt_shift_topic, doc["mqtt_shift_topic"] | "epd/shift", sizeof(config.mqtt_shift_topic));
-          strlcpy(config.mqtt_air_quality_topic, doc["mqtt_air_quality_topic"] | "epd/air_quality", sizeof(config.mqtt_air_quality_topic));
           strlcpy(config.mqtt_battery_topic, doc["mqtt_battery_topic"] | "shanyinhan/epd/battery", sizeof(config.mqtt_battery_topic));
           strlcpy(config.mqtt_unified_topic, doc["mqtt_unified_topic"] | "epd/unified", sizeof(config.mqtt_unified_topic));
-          strlcpy(config.mqtt_request_topic, doc["mqtt_request_topic"] | "epd/weatherrequest", sizeof(config.mqtt_request_topic));
           strlcpy(config.ntp_server, doc["ntp_server"] | "ntp1.aliyun.com", sizeof(config.ntp_server));
           strlcpy(config.ntp_server_2, doc["ntp_server_2"] | "ntp2.aliyun.com", sizeof(config.ntp_server_2));
           config.full_refresh_period = doc["full_refresh_period"] | 0;
@@ -691,22 +739,14 @@ void saveConfig() {
   JsonDocument doc;
   doc["wifi_ssid"] = config.wifi_ssid;
   doc["wifi_pass"] = config.wifi_pass;
-  doc["device_name"] = config.device_name;
   doc["mqtt_server"] = config.mqtt_server;
   doc["mqtt_port"] = config.mqtt_port;
   doc["mqtt_protocol"] = normalizeMqttProtocol(config.mqtt_protocol);
   doc["mqtt_user"] = config.mqtt_user;
   doc["mqtt_pass"] = config.mqtt_pass;
-  doc["mqtt_topic"] = config.mqtt_topic;
-  doc["mqtt_weather_topic"] = config.mqtt_weather_topic;
   doc["mqtt_hourly_topic"] = config.mqtt_hourly_topic;
-  doc["mqtt_date_topic"] = config.mqtt_date_topic;
-  doc["mqtt_env_topic"] = config.mqtt_env_topic;
-  doc["mqtt_shift_topic"] = config.mqtt_shift_topic;
-  doc["mqtt_air_quality_topic"] = config.mqtt_air_quality_topic;
   doc["mqtt_battery_topic"] = config.mqtt_battery_topic;
   doc["mqtt_unified_topic"] = config.mqtt_unified_topic;
-  doc["mqtt_request_topic"] = config.mqtt_request_topic;
   doc["ntp_server"] = config.ntp_server;
   doc["ntp_server_2"] = config.ntp_server_2;
   doc["full_refresh_period"] = config.full_refresh_period;
@@ -783,17 +823,6 @@ void publishBatteryVoltage() {
     } else {
         Serial.println("Cannot publish: mqtt_battery_topic is empty");
     }
-}
-
-static bool subscribeTopicWithLog(const char* context, const char* label, const char* topic) {
-    if (topic == nullptr || strlen(topic) == 0) {
-        Serial.printf("%s subscribe skipped: %s topic empty\n", context, label);
-        return false;
-    }
-
-    bool ok = client.subscribe(topic);
-    Serial.printf("%s subscribe %s: %s [%s]\n", context, label, topic, ok ? "ok" : "failed");
-    return ok;
 }
 
 static void ensureNtpClientStarted() {
@@ -1946,247 +1975,6 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       return;
   }
 
-  if (strcmp(topic, config.mqtt_date_topic) == 0) {
-      JsonDocument doc;
-      DeserializationError error = deserializeJson(doc, (char*)payload, length);
-      if (!error) {
-          if (jsonHasKey(doc, "阳历日期")) solarDate = doc["阳历日期"].as<String>();
-          if (jsonHasKey(doc, "星期")) weekDay = doc["星期"].as<String>();
-          if (jsonHasKey(doc, "农历日期")) lunarDate = doc["农历日期"].as<String>();
-          if (jsonHasKey(doc, "节气信息")) termInfo = doc["节气信息"].as<String>();
-          
-          Serial.println("Date info updated");
-          updateDatePending = true;
-          lastUpdateTrigger = millis();
-      } else {
-          Serial.print("JSON Error (Date): ");
-          Serial.println(error.c_str());
-      }
-      return;
-  }
-
-        if (strcmp(topic, config.mqtt_env_topic) == 0) {
-            Serial.println("Env updated");
-            
-            JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, (char*)payload, length);
-            if (!error) {
-                if (jsonHasKey(doc, "temp")) indoorTemp = doc["temp"].as<String>();
-                if (jsonHasKey(doc, "humi")) indoorHumi = doc["humi"].as<String>();
-                
-                updateEnvPending = true;
-                lastUpdateTrigger = millis();
-            } else {
-                Serial.print("JSON Error (Env): ");
-                Serial.println(error.c_str());
-            }
-            return;
-        }
-
-        if (strcmp(topic, config.mqtt_air_quality_topic) == 0) {
-             Serial.println("Air Quality Message Received");
-             JsonDocument doc;
-             DeserializationError error = deserializeJson(doc, payload, length);
-             if (!error) {
-                 if (jsonHasKey(doc, "pm2p5")) airPm2p5 = doc["pm2p5"].as<String>();
-                 if (jsonHasKey(doc, "category")) airCategory = doc["category"].as<String>();
-                 updateWeatherPending = true; // Refresh weather page to show new air quality
-                 lastUpdateTrigger = millis();
-                 Serial.printf("Air Quality Updated: PM2.5=%s, Category=%s\n", airPm2p5.c_str(), airCategory.c_str());
-             } else {
-                 Serial.print("JSON Error (Air): ");
-                 Serial.println(error.c_str());
-             }
-             return;
-        }
-
-        if (strcmp(topic, config.mqtt_shift_topic) == 0) {
-      Serial.println("Shift updated");
-      Serial.print("Payload length: ");
-      Serial.println(length);
-
-      JsonDocument doc;
-      DeserializationError error = deserializeJson(doc, (char*)payload, length);
-      
-      if (!error) {
-          // Parse into temporary vector first
-          std::vector<ShiftEvent> newShifts;
-          
-          // Use current time as default Year/Month context for parsing simple dates
-          time_t now = timeClient.getEpochTime();
-          struct tm *t_now = gmtime(&now);
-          int currentYear = t_now->tm_year + 1900;
-          int currentMonth = t_now->tm_mon + 1;
-          
-          // Helper lambda to add to temp list
-          auto addTempShift = [&](int y, int m, int d, String c) {
-              ShiftEvent ev;
-              ev.year = y; ev.month = m; ev.day = d; ev.content = c;
-              newShifts.push_back(ev);
-          };
-          
-          // 1. Handle Array: ["2026-02-17", "Shift"] or [{"date":"...", "shift":"..."}]
-          if (doc.is<JsonArray>()) {
-               JsonArray arr = doc.as<JsonArray>();
-               if (arr.size() == 2 && arr[0].is<String>() && arr[1].is<String>()) {
-                    String dateStr = arr[0].as<String>();
-                    int year, month, day;
-                    if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
-                        addTempShift(year, month, day, arr[1].as<String>());
-                    }
-               } 
-               else {
-                   for (JsonVariant v : arr) {
-                       if (v.is<JsonObject>()) {
-                           JsonObject obj = v.as<JsonObject>();
-                           String dateStr = "";
-                           if (jsonHasKey(obj, "date")) dateStr = obj["date"].as<String>();
-                           else if (jsonHasKey(obj, "day")) dateStr = obj["day"].as<String>();
-                           
-                           if (dateStr.length() > 0) {
-                               int year, month, day;
-                               if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
-                                   String content = "";
-                                   if (jsonHasKey(obj, "shift")) content = obj["shift"].as<String>();
-                                   else if (jsonHasKey(obj, "content")) content = obj["content"].as<String>();
-                                   else if (jsonHasKey(obj, "summary")) content = obj["summary"].as<String>();
-                                   
-                                   if (content.length() > 0) addTempShift(year, month, day, content);
-                               }
-                           }
-                       }
-                   }
-               }
-          }
-          // 2. Handle Object
-          else if (doc.is<JsonObject>()) {
-               JsonObject root = doc.as<JsonObject>();
-               bool foundDateKeys = false;
-               for (JsonPair kv : root) {
-                   String rawKey = kv.key().c_str();
-                   String key = "";
-                   for (unsigned int i = 0; i < rawKey.length(); i++) {
-                       char c = rawKey[i];
-                       if (isdigit(c) || c == '-') key += c;
-                   }
-
-                   int year, month, day;
-                   if (sscanf(key.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
-                       if (kv.value().is<String>()) {
-                           String content = kv.value().as<String>();
-                           if (content.length() > 0) {
-                               addTempShift(year, month, day, content);
-                               foundDateKeys = true;
-                               currentYear = year;
-                               currentMonth = month;
-                           }
-                       }
-                   } 
-                   else if (sscanf(key.c_str(), "%d", &day) == 1) {
-                       if (key.indexOf('-') == -1 && day >= 1 && day <= 31 && kv.value().is<String>()) {
-                           String content = kv.value().as<String>();
-                           if (content.length() > 0) {
-                               addTempShift(currentYear, currentMonth, day, content);
-                               foundDateKeys = true;
-                           }
-                       }
-                   }
-               }
-               
-               if (!foundDateKeys) {
-                   if (jsonHasKey(root, "date") || jsonHasKey(root, "day")) {
-                        String dateStr = jsonHasKey(root, "date") ? root["date"].as<String>() : root["day"].as<String>();
-                        int year, month, day;
-                        if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
-                            String content = "";
-                            if (jsonHasKey(root, "shift")) content = root["shift"].as<String>();
-                            else if (jsonHasKey(root, "content")) content = root["content"].as<String>();
-                            if (content.length() > 0) addTempShift(year, month, day, content);
-                        }
-                   }
-                   else {
-                       JsonArray shifts;
-                       if (jsonHasKey(root, "shifts")) shifts = root["shifts"];
-                       else if (jsonHasKey(root, "data")) shifts = root["data"];
-                       
-                       if (!shifts.isNull()) {
-                           for (JsonVariant v : shifts) {
-                               if (v.is<JsonObject>()) {
-                                   JsonObject obj = v.as<JsonObject>();
-                                   String dateStr = "";
-                                   if (jsonHasKey(obj, "date")) dateStr = obj["date"].as<String>();
-                                   
-                                   int year, month, day;
-                                   if (sscanf(dateStr.c_str(), "%d-%d-%d", &year, &month, &day) == 3) {
-                                       String content = "";
-                                       if (jsonHasKey(obj, "shift")) content = obj["shift"].as<String>();
-                                       if (content.length() > 0) addTempShift(year, month, day, content);
-                                   }
-                               }
-                           }
-                       }
-                   }
-               }
-          }
-
-          // MERGE LOGIC: 
-          // 1. Find min date in newShifts
-          // 2. Remove all existing shifts >= min date
-          // 3. Add all new shifts
-          
-          if (!newShifts.empty()) {
-              // Find min date
-              ShiftEvent minEv = newShifts[0];
-              for(const auto& ev : newShifts) {
-                  if (ev.year < minEv.year) minEv = ev;
-                  else if (ev.year == minEv.year && ev.month < minEv.month) minEv = ev;
-                  else if (ev.year == minEv.year && ev.month == minEv.month && ev.day < minEv.day) minEv = ev;
-              }
-              
-              // Remove existing >= minDate
-              auto it = std::remove_if(shiftEvents.begin(), shiftEvents.end(), [&](const ShiftEvent& ev) {
-                  if (ev.year > minEv.year) return true;
-                  if (ev.year == minEv.year && ev.month > minEv.month) return true;
-                  if (ev.year == minEv.year && ev.month == minEv.month && ev.day >= minEv.day) return true;
-                  return false;
-              });
-              shiftEvents.erase(it, shiftEvents.end());
-              
-              // Add new shifts
-              shiftEvents.insert(shiftEvents.end(), newShifts.begin(), newShifts.end());
-              
-              Serial.printf("Merged %d new shifts. Min Date: %d-%d-%d\n", newShifts.size(), minEv.year, minEv.month, minEv.day);
-          }
-          
-          // Sort events by date
-          std::sort(shiftEvents.begin(), shiftEvents.end(), [](const ShiftEvent& a, const ShiftEvent& b) {
-              if (a.year != b.year) return a.year < b.year;
-              if (a.month != b.month) return a.month < b.month;
-              return a.day < b.day;
-          });
-          
-          // Enforce Max Size (Remove Oldest)
-          while (shiftEvents.size() > MAX_SHIFT_EVENTS) {
-              shiftEvents.erase(shiftEvents.begin());
-          }
-          
-          Serial.print("Total shifts stored: ");
-          Serial.println(shiftEvents.size());
-          
-          updateWeatherPending = true;
-          lastUpdateTrigger = millis();
-      } else {
-          Serial.print("JSON Error (Shift): ");
-          Serial.println(error.c_str());
-      }
-      return;
-  }
-
-  if (strcmp(topic, "epd/weatherrequest") == 0) {
-       // Ignore our own request messages if subscribed
-       return; 
-  }
-
   if (strcmp(topic, config.mqtt_hourly_topic) == 0) {
       if (!isHourlyForecastEnabled()) {
           Serial.println("Hourly forecast ignored in Battery mode");
@@ -2258,158 +2046,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       return;
   }
 
-  if (strcmp(topic, config.mqtt_weather_topic) == 0) {
-      Serial.println("Weather updated");
-
-      JsonDocument doc;
-      // Filter to exclude hourly/minutely data which consumes memory
-      JsonDocument filter;
-      // Array root
-      filter[0]["fxDate"] = true; filter[0]["date"] = true; filter[0]["日期"] = true;
-      filter[0]["tempMax"] = true; filter[0]["tempMin"] = true; filter[0]["temp"] = true; filter[0]["最高温"] = true; filter[0]["最低温"] = true;
-      filter[0]["textDay"] = true; filter[0]["textNight"] = true; filter[0]["白天天气"] = true; filter[0]["夜晚天气"] = true; filter[0]["天气"] = true; filter[0]["weather"] = true;
-      filter[0]["iconDay"] = true; filter[0]["iconNight"] = true;
-      filter[0]["windDirDay"] = true; filter[0]["windDir"] = true; filter[0]["风向"] = true;
-      filter[0]["windScaleDay"] = true; filter[0]["windScale"] = true; filter[0]["windSpeedDay"] = true; filter[0]["风速"] = true;
-      
-      // Nested arrays
-      filter["daily"] = filter; // Reuse the array filter structure for "daily" key
-      filter["data"] = filter;
-      filter["forecast"] = filter;
-      
-      // But wait, filter["daily"] = filter assigns the WHOLE filter object to "daily".
-      // The filter object currently contains [0]... and "daily"...
-      // This recursive assignment might be weird or efficient.
-      // Actually, if I do `filter["daily"][0]["fxDate"] = true`, it's better.
-      // But re-typing is tedious.
-      // Let's just type it out to be safe and clear.
-      
-      // Re-doing the filter construction properly:
-      JsonDocument f;
-      JsonObject p = f.to<JsonObject>();
-      // Define the element filter
-      JsonObject e = p["e"].to<JsonObject>(); // Temporary object to hold element filter
-      e["fxDate"] = true; e["date"] = true; e["日期"] = true;
-      e["tempMax"] = true; e["tempMin"] = true; e["temp"] = true; e["最高温"] = true; e["最低温"] = true;
-      e["textDay"] = true; e["textNight"] = true; e["白天天气"] = true; e["夜晚天气"] = true; e["天气"] = true; e["weather"] = true;
-      e["iconDay"] = true; e["iconNight"] = true;
-      e["windDirDay"] = true; e["windDir"] = true; e["风向"] = true;
-      e["windScaleDay"] = true; e["windScale"] = true; e["windSpeedDay"] = true; e["风速"] = true;
-      
-      // Apply to paths
-      filter[0] = e;
-      filter["daily"][0] = e;
-      filter["data"][0] = e;
-      filter["forecast"][0] = e;
-
-      DeserializationError error = deserializeJson(doc, (char*)payload, length, DeserializationOption::Filter(filter));
-
-      if (!error) {
-          Serial.println("Parsing JSON...");
-          
-          int count = 0;
-
-          // Check if root is an array (specific format requested)
-          if (doc.is<JsonArray>()) {
-              Serial.println("Found root array data");
-              JsonArray data = doc.as<JsonArray>();
-              for(JsonVariant v : data) {
-                  if (count >= 7) break;
-                  
-                  // Mapping new JSON format keys
-                  if (jsonHasKey(v, "fxDate")) currentForecast[count].date = v["fxDate"].as<String>();
-                  else if (jsonHasKey(v, "日期")) currentForecast[count].date = v["日期"].as<String>();
-                  else if (jsonHasKey(v, "date")) currentForecast[count].date = v["date"].as<String>();
-                  
-                  // Temp: High/Low range
-                  if (jsonHasKey(v, "tempMax") && jsonHasKey(v, "tempMin")) {
-                      currentForecast[count].temp = v["tempMax"].as<String>() + "/" + v["tempMin"].as<String>();
-                  } else if (jsonHasKey(v, "最高温") && jsonHasKey(v, "最低温")) {
-                      currentForecast[count].temp = v["最高温"].as<String>() + "/" + v["最低温"].as<String>();
-                  } else if (jsonHasKey(v, "temp")) {
-                      currentForecast[count].temp = v["temp"].as<String>();
-                  }
-                  
-                  // Condition Day
-                  if (jsonHasKey(v, "textDay")) currentForecast[count].cond_day = v["textDay"].as<String>();
-                  else if (jsonHasKey(v, "白天天气")) currentForecast[count].cond_day = v["白天天气"].as<String>();
-                  else if (jsonHasKey(v, "天气")) currentForecast[count].cond_day = v["天气"].as<String>();
-                  else if (jsonHasKey(v, "weather")) currentForecast[count].cond_day = v["weather"].as<String>();
-                  
-                  // Condition Night
-                  if (jsonHasKey(v, "textNight")) currentForecast[count].cond_night = v["textNight"].as<String>();
-                  else if (jsonHasKey(v, "夜晚天气")) currentForecast[count].cond_night = v["夜晚天气"].as<String>();
-
-                  // Icons
-                  if (jsonHasKey(v, "iconDay")) currentForecast[count].icon_day = v["iconDay"].as<String>();
-                  if (jsonHasKey(v, "iconNight")) currentForecast[count].icon_night = v["iconNight"].as<String>();
-                  
-                  // Wind
-                  if (jsonHasKey(v, "windDirDay")) currentForecast[count].wind_dir = v["windDirDay"].as<String>();
-                  else if (jsonHasKey(v, "windDir")) currentForecast[count].wind_dir = v["windDir"].as<String>();
-                  else if (jsonHasKey(v, "风向")) currentForecast[count].wind_dir = v["风向"].as<String>();
-                  
-                  if (jsonHasKey(v, "windScaleDay")) currentForecast[count].wind_sc = v["windScaleDay"].as<String>();
-                  else if (jsonHasKey(v, "windScale")) currentForecast[count].wind_sc = v["windScale"].as<String>();
-                  else if (jsonHasKey(v, "windSpeedDay")) currentForecast[count].wind_sc = v["windSpeedDay"].as<String>();
-                  else if (jsonHasKey(v, "风速")) currentForecast[count].wind_sc = v["风速"].as<String>();
-                  
-                  if (currentForecast[count].date.length() > 0) {
-                      count++;
-                  }
-              }
-          } 
-          // Handle object with data array (standard formats)
-          else {
-              JsonArray data = doc["data"];
-              if (data.isNull()) data = doc["daily"]; 
-              if (data.isNull()) data = doc["forecast"];
-              
-              if (!data.isNull()) {
-                  Serial.println("Found nested array data");
-                  for(JsonVariant v : data) {
-                      if (count >= 7) break;
-                      
-                      if (jsonHasKey(v, "date")) currentForecast[count].date = v["date"].as<String>();
-                      else if (jsonHasKey(v, "day")) currentForecast[count].date = v["day"].as<String>();
-                      
-                      if (jsonHasKey(v, "temp")) currentForecast[count].temp = v["temp"].as<String>();
-                      else if (jsonHasKey(v, "high")) currentForecast[count].temp = v["high"].as<String>();
-                      
-                      if (jsonHasKey(v, "weather")) currentForecast[count].cond_day = v["weather"].as<String>();
-                      else if (jsonHasKey(v, "text")) currentForecast[count].cond_day = v["text"].as<String>();
-                      
-                      if (currentForecast[count].date.length() > 0) count++;
-                  }
-              }
-          }
-
-          Serial.print("Forecast count: ");
-          Serial.println(count);
-          currentForecastCount = count;
-
-          if (count > 0) {
-              updateWeatherPending = true;
-              fullRefreshPending = true; // Set full refresh flag for weather data
-              lastUpdateTrigger = millis();
-          } else {
-               String prettyJson;
-               serializeJsonPretty(doc, prettyJson);
-               displayMessage("JSON Data (No forecast found):\n" + prettyJson);
-          }
-      } else {
-          Serial.print("JSON Error: ");
-          Serial.println(error.c_str());
-          
-          String msg = "";
-          for (int i = 0; i < length; i++) msg += (char)payload[i];
-          displayMessage("JSON Error:\n" + String(error.c_str()) + "\n" + msg);
-      }
-  } else {
-      String msg = "";
-      for (int i = 0; i < length; i++) msg += (char)payload[i];
-      displayMessage(msg);
-  }
+  Serial.printf("Ignoring unsupported topic: %s\n", topic);
 }
 
 bool reconnect() {
@@ -2417,58 +2054,42 @@ bool reconnect() {
   
   if (!client.connected()) {
     applyMqttTransportConfig();
+    IPAddress directIp;
+    if (!mqttServerIpValid && !directIp.fromString(config.mqtt_server)) {
+      Serial.println("MQTT connect skipped: broker DNS unresolved");
+      return false;
+    }
     Serial.printf("Attempting MQTT connection using %s...\n", getMqttProtocolName(config.mqtt_protocol));
+    if (mqttServerIpValid) {
+      Serial.printf("MQTT connect target: %s:%d (%s)\n",
+                    mqttResolvedServerIp.toString().c_str(),
+                    config.mqtt_port,
+                    mqttResolvedServerHost);
+    } else {
+      Serial.printf("MQTT connect target: %s:%d (hostname)\n",
+                    config.mqtt_server,
+                    config.mqtt_port);
+    }
     String clientId = "ESP32Client-";
     clientId += String(random(0xffff), HEX);
     
+    unsigned long connectStart = millis();
     bool connected = false;
     if (strlen(config.mqtt_user) > 0) {
       connected = client.connect(clientId.c_str(), config.mqtt_user, config.mqtt_pass);
     } else {
       connected = client.connect(clientId.c_str());
     }
+    unsigned long connectElapsed = millis() - connectStart;
 
     if (connected) {
-      Serial.println("connected");
+      Serial.printf("connected (%lu ms)\n", connectElapsed);
       mqttEverConnected = true;
 
-      client.subscribe(config.mqtt_topic);
-      if (strlen(config.mqtt_weather_topic) > 0) {
-          if (client.subscribe(config.mqtt_weather_topic)) {
-              Serial.print("Subscribed to: ");
-              Serial.println(config.mqtt_weather_topic);
-          } else {
-              Serial.println("Subscription failed");
-          }
-      }
       if (isHourlyForecastEnabled() && strlen(config.mqtt_hourly_topic) > 0) {
           if (client.subscribe(config.mqtt_hourly_topic)) {
               Serial.print("Subscribed to: ");
               Serial.println(config.mqtt_hourly_topic);
-          }
-      }
-      if (strlen(config.mqtt_date_topic) > 0) {
-          if (client.subscribe(config.mqtt_date_topic)) {
-              Serial.print("Subscribed to: ");
-              Serial.println(config.mqtt_date_topic);
-          }
-      }
-      if (strlen(config.mqtt_env_topic) > 0) {
-          if (client.subscribe(config.mqtt_env_topic)) {
-              Serial.print("Subscribed to: ");
-              Serial.println(config.mqtt_env_topic);
-          }
-      }
-      if (strlen(config.mqtt_shift_topic) > 0) {
-          if (client.subscribe(config.mqtt_shift_topic)) {
-              Serial.print("Subscribed to: ");
-              Serial.println(config.mqtt_shift_topic);
-          }
-      }
-      if (strlen(config.mqtt_air_quality_topic) > 0) {
-          if (client.subscribe(config.mqtt_air_quality_topic)) {
-              Serial.print("Subscribed to: ");
-              Serial.println(config.mqtt_air_quality_topic);
           }
       }
       
@@ -2486,7 +2107,12 @@ bool reconnect() {
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" try again later");
+      Serial.printf(" elapsed=%lu ms\n", connectElapsed);
+      if (client.state() == MQTT_CONNECTION_TIMEOUT) {
+          mqttServerIpValid = false;
+          mqttResolvedServerHost[0] = '\0';
+          Serial.println("MQTT timeout: cleared DNS cache for next retry");
+      }
       return false;
     }
   }
@@ -2591,9 +2217,6 @@ void setup() {
       }
   }
   
-  Serial.print("Air Quality Topic: ");
-  Serial.println(config.mqtt_air_quality_topic);
-
   // Serial2 Init (Used for "bye" signal)
   Serial2.begin(9600, SERIAL_8N1, 16, 17);
 
@@ -2634,8 +2257,7 @@ void setup() {
       char macSuffix[5];
       sprintf(macSuffix, "%02X%02X", mac[4], mac[5]);
       
-      const char* baseSSID = (strlen(config.device_name) > 0) ? config.device_name : DEFAULT_AP_SSID_BASE;
-      ap_ssid = String(baseSSID) + "-" + String(macSuffix);
+      ap_ssid = String(DEFAULT_AP_SSID_BASE) + "-" + String(macSuffix);
       
       WiFi.softAP(ap_ssid.c_str());
       Serial.println("AP Started: " + ap_ssid);
@@ -2657,7 +2279,6 @@ void setup() {
   if (!isBatteryModeActive) {
       server.on("/", handleRoot);
       server.on("/files", handleFileManager);
-      server.on("/setText", handleSetText);
       server.on("/saveConfig", handleSaveConfig);
       server.on("/mqtt_config", handleMqttConfig);
       server.on("/reboot", HTTP_POST, handleReboot);
@@ -2682,7 +2303,7 @@ void setup() {
       printf("HTTP server started\r\n");
 
       // Setup OTA
-      const char* hostName = (strlen(config.device_name) > 0) ? config.device_name : "EPD-Display";
+      const char* hostName = DEFAULT_AP_SSID_BASE;
       ArduinoOTA.setHostname(hostName);
       
       if (MDNS.begin(hostName)) {
@@ -2726,15 +2347,8 @@ void setup() {
                     getMqttProtocolName(config.mqtt_protocol),
                     config.mqtt_server,
                     config.mqtt_port);
-      Serial.printf("MQTT Setup Topic text: %s\n", config.mqtt_topic);
-      Serial.printf("MQTT Setup Topic weather: %s\n", config.mqtt_weather_topic);
       Serial.printf("MQTT Setup Topic hourly: %s\n", config.mqtt_hourly_topic);
-      Serial.printf("MQTT Setup Topic date: %s\n", config.mqtt_date_topic);
-      Serial.printf("MQTT Setup Topic env: %s\n", config.mqtt_env_topic);
-      Serial.printf("MQTT Setup Topic shift: %s\n", config.mqtt_shift_topic);
-      Serial.printf("MQTT Setup Topic air_quality: %s\n", config.mqtt_air_quality_topic);
       Serial.printf("MQTT Setup Topic unified: %s\n", config.mqtt_unified_topic);
-      Serial.printf("MQTT Setup Topic request: %s\n", config.mqtt_request_topic);
       if (isHourlyForecastEnabled()) {
           Serial.printf("Startup hourly forecast topic: %s\n",
                         strlen(config.mqtt_hourly_topic) > 0 ? config.mqtt_hourly_topic : "(empty)");
@@ -2928,8 +2542,7 @@ void loop() {
    if (config.request_interval > 0 && client.connected()) {
        if (millis() - lastRequestTime > (unsigned long)config.request_interval * 60 * 1000) { // Convert minutes to ms
            lastRequestTime = millis();
-           Serial.println("Sending Periodic Weather Request & Battery Update");
-           client.publish(config.mqtt_request_topic, "get");
+          Serial.println("Sending Periodic Battery Update");
            publishBatteryVoltage();
        }
    }
