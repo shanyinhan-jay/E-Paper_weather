@@ -163,24 +163,60 @@ void handleUpdate() {
 void handleUpdateFirmware() {
   HTTPUpload& upload = server.upload();
   if (upload.status == UPLOAD_FILE_START) {
-    Serial.printf("Update: %s\n", upload.filename.c_str());
-    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) { // start with max available size
-      Serial.print("Update.begin error: ");
+    webOtaInProgress = true;
+    webOtaUploadFinished = false;
+    webOtaUploadSucceeded = false;
+    webOtaHasError = false;
+    webOtaBytesWritten = 0;
+    webOtaStartMillis = millis();
+
+    Serial.printf("Web OTA start: %s\n", upload.filename.c_str());
+    bool beginOk = Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH);
+    Serial.printf("Web OTA begin: %s\n", beginOk ? "ok" : "failed");
+    if (!beginOk) {
+      webOtaHasError = true;
+      Serial.printf("Web OTA begin failed, error=%d: ", Update.getError());
       Update.printError(Serial);
+      Serial.println();
     }
   } else if (upload.status == UPLOAD_FILE_WRITE) {
-    /* flashing firmware to ESP */
-    if (Update.write(upload.buf, upload.currentSize) != upload.currentSize) {
-      Serial.print("Update.write error: ");
+    if (webOtaHasError) {
+      return;
+    }
+
+    size_t written = Update.write(upload.buf, upload.currentSize);
+    webOtaBytesWritten += written;
+    if (written != upload.currentSize) {
+      webOtaHasError = true;
+      Serial.printf("Web OTA write failed at %u bytes, wrote %u, error=%d: ",
+                    (unsigned int)webOtaBytesWritten,
+                    (unsigned int)written,
+                    Update.getError());
       Update.printError(Serial);
+      Serial.println();
+    } else if ((webOtaBytesWritten % 65536) < upload.currentSize) {
+      Serial.printf("Web OTA progress: %u bytes written\n", (unsigned int)webOtaBytesWritten);
     }
   } else if (upload.status == UPLOAD_FILE_END) {
-    if (Update.end(true)) { // true to set the size to the current progress
-      Serial.printf("Update Success: %u bytes. Rebooting...\n", upload.totalSize);
+    webOtaUploadFinished = true;
+    if (!webOtaHasError && Update.end(true)) {
+      webOtaUploadSucceeded = true;
+      unsigned long elapsed = millis() - webOtaStartMillis;
+      Serial.printf("Web OTA success: %u bytes in %lu ms\n", upload.totalSize, elapsed);
     } else {
-      Serial.print("Update.end error: ");
+      webOtaHasError = true;
+      Serial.printf("Web OTA end failed, error=%d: ", Update.getError());
       Update.printError(Serial);
+      Serial.println();
     }
+    webOtaInProgress = false;
+  } else if (upload.status == UPLOAD_FILE_ABORTED) {
+    webOtaHasError = true;
+    webOtaUploadFinished = true;
+    webOtaUploadSucceeded = false;
+    webOtaInProgress = false;
+    Update.abort();
+    Serial.printf("Web OTA aborted after %u bytes\n", (unsigned int)webOtaBytesWritten);
   }
 }
 

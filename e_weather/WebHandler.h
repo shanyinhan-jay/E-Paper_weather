@@ -17,6 +17,12 @@ extern float getBatteryVoltage();
 extern void displayMessage(String text);
 extern void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight);
 extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
+extern bool webOtaInProgress;
+extern bool webOtaUploadFinished;
+extern bool webOtaUploadSucceeded;
+extern bool webOtaHasError;
+extern size_t webOtaBytesWritten;
+extern unsigned long webOtaStartMillis;
 
 // Common CSS for all pages
 const char COMMON_CSS[] PROGMEM = R"css(

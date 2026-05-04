@@ -263,6 +263,15 @@ Paint_GFX paint_gfx;
 U8G2_FOR_ADAFRUIT_GFX u8g2;
 static int lastEpdDriverUsed = -1;
 static bool littlefsReady = false;
+static bool mqttEverConnected = false;
+static bool ntpClientStarted = false;
+bool webOtaInProgress = false;
+bool webOtaUploadFinished = false;
+bool webOtaUploadSucceeded = false;
+bool webOtaHasError = false;
+size_t webOtaBytesWritten = 0;
+unsigned long webOtaStartMillis = 0;
+static unsigned long lastWiFiReconnectAttempt = 0;
 
 static inline bool jsonHasKey(const JsonVariantConst& obj, const char* key) {
   return !obj[key].isNull();
@@ -300,6 +309,146 @@ static void applyMqttTransportConfig() {
     client.setServer(config.mqtt_server, config.mqtt_port);
     client.setCallback(mqttCallback);
     client.setBufferSize(4096);
+}
+
+static String formatBssid(const uint8_t* bssid) {
+    if (bssid == nullptr) return "unknown";
+
+    char buffer[18];
+    snprintf(buffer, sizeof(buffer), "%02X:%02X:%02X:%02X:%02X:%02X",
+             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    return String(buffer);
+}
+
+static void logCurrentWiFiLink(const char* context) {
+    Serial.println(context);
+    Serial.print("IP Address: ");
+    Serial.println(WiFi.localIP());
+    Serial.printf("WiFi RSSI: %d dBm\n", WiFi.RSSI());
+    Serial.printf("WiFi Channel: %d\n", WiFi.channel());
+    Serial.printf("WiFi BSSID: %s\n", WiFi.BSSIDstr().c_str());
+}
+
+static void configureStationNetworkSettings() {
+    WiFi.persistent(false);
+    WiFi.setSleep(false);
+    WiFi.setAutoReconnect(true);
+    wifi_mode_t currentMode = WiFi.getMode();
+    if (currentMode & WIFI_AP) {
+        WiFi.mode(WIFI_AP_STA);
+    } else {
+        WiFi.mode(WIFI_STA);
+    }
+
+    if (config.use_static_ip) {
+        IPAddress ip, gw, mask, dns;
+        if (ip.fromString(config.static_ip) && gw.fromString(config.static_gw) && mask.fromString(config.static_mask)) {
+            if (strlen(config.static_dns) > 0) dns.fromString(config.static_dns);
+            else dns.fromString("8.8.8.8");
+
+            if (!WiFi.config(ip, gw, mask, dns)) {
+                Serial.println("STA Failed to configure");
+            } else {
+                Serial.println("Static IP Configured");
+            }
+        } else {
+            Serial.println("Invalid Static IP Config");
+        }
+    } else {
+        WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+    }
+}
+
+static bool scanBestWiFiCandidate(const char* targetSsid, int32_t& bestChannel, uint8_t bestBssid[6], int32_t& bestRssi) {
+    if (targetSsid == nullptr || strlen(targetSsid) == 0) return false;
+    bool found = false;
+    bestRssi = -127;
+    bestChannel = 0;
+    memset(bestBssid, 0, 6);
+
+    Serial.printf("WiFi scan start for SSID: %s\n", targetSsid);
+    int networkCount = WiFi.scanNetworks(false, true);
+    if (networkCount < 0) {
+        Serial.printf("WiFi scan failed: %d\n", networkCount);
+        WiFi.scanDelete();
+        return false;
+    }
+
+    Serial.printf("WiFi scan found %d network(s)\n", networkCount);
+    for (int i = 0; i < networkCount; ++i) {
+        String scannedSsid = WiFi.SSID(i);
+        if (scannedSsid != targetSsid) continue;
+
+        int32_t rssi = WiFi.RSSI(i);
+        int32_t channel = WiFi.channel(i);
+        const uint8_t* bssid = WiFi.BSSID(i);
+        String bssidText = formatBssid(bssid);
+        Serial.printf("WiFi candidate: ssid=%s channel=%d rssi=%d bssid=%s\n",
+                      scannedSsid.c_str(), channel, rssi, bssidText.c_str());
+
+        if (!found || rssi > bestRssi) {
+            found = true;
+            bestRssi = rssi;
+            bestChannel = channel;
+            if (bssid != nullptr) {
+                memcpy(bestBssid, bssid, 6);
+            } else {
+                memset(bestBssid, 0, 6);
+            }
+        }
+    }
+
+    WiFi.scanDelete();
+
+    if (found) {
+        Serial.printf("WiFi best candidate selected: channel=%d rssi=%d bssid=%s\n",
+                      bestChannel,
+                      bestRssi,
+                      formatBssid(bestBssid).c_str());
+    } else {
+        Serial.printf("WiFi scan: target SSID not found: %s\n", targetSsid);
+    }
+
+    return found;
+}
+
+static bool connectConfiguredWiFi(unsigned long timeoutMs, bool preferStrongestAp) {
+    if (strlen(config.wifi_ssid) == 0) return false;
+
+    configureStationNetworkSettings();
+    WiFi.disconnect(false, true);
+    delay(100);
+
+    int32_t bestChannel = 0;
+    int32_t bestRssi = -127;
+    uint8_t bestBssid[6] = {0};
+    bool hasBestCandidate = preferStrongestAp &&
+                            scanBestWiFiCandidate(config.wifi_ssid, bestChannel, bestBssid, bestRssi);
+
+    if (hasBestCandidate) {
+        Serial.printf("WiFi begin using strongest AP: ssid=%s channel=%d rssi=%d bssid=%s\n",
+                      config.wifi_ssid,
+                      bestChannel,
+                      bestRssi,
+                      formatBssid(bestBssid).c_str());
+        WiFi.begin(config.wifi_ssid, config.wifi_pass, bestChannel, bestBssid, true);
+    } else {
+        Serial.printf("WiFi begin using default AP selection: ssid=%s\n", config.wifi_ssid);
+        WiFi.begin(config.wifi_ssid, config.wifi_pass);
+    }
+
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - start) < timeoutMs) {
+        delay(250);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        logCurrentWiFiLink("WiFi Connected!");
+        return true;
+    }
+
+    Serial.printf("WiFi connect timed out after %lu ms\n", timeoutMs);
+    return false;
 }
 
 static bool ensureLittleFSReady() {
@@ -645,6 +794,17 @@ static bool subscribeTopicWithLog(const char* context, const char* label, const 
     bool ok = client.subscribe(topic);
     Serial.printf("%s subscribe %s: %s [%s]\n", context, label, topic, ok ? "ok" : "failed");
     return ok;
+}
+
+static void ensureNtpClientStarted() {
+    if (ntpClientStarted) return;
+
+    const char* ntp1 = (strlen(config.ntp_server) > 0) ? config.ntp_server : "ntp.aliyun.com";
+    timeClient.setPoolServerName(ntp1);
+    timeClient.setTimeOffset(28800);
+    timeClient.begin();
+    ntpClientStarted = true;
+    Serial.printf("NTP client started (%s)\n", ntp1);
 }
 
 void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight) {
@@ -2270,6 +2430,8 @@ bool reconnect() {
 
     if (connected) {
       Serial.println("connected");
+      mqttEverConnected = true;
+
       client.subscribe(config.mqtt_topic);
       if (strlen(config.mqtt_weather_topic) > 0) {
           if (client.subscribe(config.mqtt_weather_topic)) {
@@ -2316,16 +2478,9 @@ bool reconnect() {
               Serial.println(config.mqtt_unified_topic);
           }
       }
-      
-      // Send Weather Request on Connect
-      client.loop();
-      delay(100);
-      
-      if (client.publish("epd/weatherrequest", "get")) {
-          Serial.println("Weather Request sent (Reconnect)");
-      } else {
-          Serial.println("Weather Request failed (Reconnect)");
-      }
+
+      ensureNtpClientStarted();
+      publishBatteryVoltage();
       return true;
 
     } else {
@@ -2450,37 +2605,7 @@ void setup() {
   bool enableAP = false;
   
   if (strlen(config.wifi_ssid) > 0) {
-      WiFi.mode(WIFI_STA);
-      
-      // Static IP Config
-      if (config.use_static_ip) {
-          IPAddress ip, gw, mask, dns;
-          if (ip.fromString(config.static_ip) && gw.fromString(config.static_gw) && mask.fromString(config.static_mask)) {
-               if (strlen(config.static_dns) > 0) dns.fromString(config.static_dns);
-               else dns.fromString("8.8.8.8");
-               
-               if (!WiFi.config(ip, gw, mask, dns)) {
-                   Serial.println("STA Failed to configure");
-               } else {
-                   Serial.println("Static IP Configured");
-               }
-          } else {
-              Serial.println("Invalid Static IP Config");
-          }
-      }
-
-      WiFi.begin(config.wifi_ssid, config.wifi_pass);
-      
-      int retry = 0;
-      while (WiFi.status() != WL_CONNECTED && retry < 60) { // Increased to 30 seconds (was 15s)
-          delay(500);
-          retry++;
-      }
-      
-      if (WiFi.status() == WL_CONNECTED) {
-          Serial.println("WiFi Connected!");
-          Serial.print("IP Address: ");
-          Serial.println(WiFi.localIP());
+      if (connectConfiguredWiFi(30000, true)) {
           
           // Display IP and Gateway info in DC mode at startup
           if (modeState == LOW) {
@@ -2528,128 +2653,7 @@ void setup() {
   timeClient.begin();
   */
   
-  // Setup MQTT
-  if (strlen(config.mqtt_server) > 0 && WiFi.status() == WL_CONNECTED) {
-      applyMqttTransportConfig();
-      Serial.printf("MQTT transport selected: %s\n", getMqttProtocolName(config.mqtt_protocol));
-      
-      // Attempt connection
-      String clientId = "ESP32Client-";
-      clientId += String(random(0xffff), HEX);
-
-      int mqttRetry = 0;
-      bool mqttConnected = false;
-      while (mqttRetry < 30 && !mqttConnected) { // 15 seconds
-          if (strlen(config.mqtt_user) > 0) {
-              mqttConnected = client.connect(clientId.c_str(), config.mqtt_user, config.mqtt_pass);
-          } else {
-              mqttConnected = client.connect(clientId.c_str());
-          }
-          if (mqttConnected) {
-              mqttConnected = true;
-          } else {
-              delay(500);
-              mqttRetry++;
-          }
-      }
-      
-      if (mqttConnected) {
-          Serial.println("MQTT Connected (Setup)");
-          Serial.printf("MQTT Setup Config: protocol=%s server=%s port=%d\n",
-                        getMqttProtocolName(config.mqtt_protocol),
-                        config.mqtt_server,
-                        config.mqtt_port);
-          Serial.printf("MQTT Setup Topic text: %s\n", config.mqtt_topic);
-          Serial.printf("MQTT Setup Topic weather: %s\n", config.mqtt_weather_topic);
-          Serial.printf("MQTT Setup Topic hourly: %s\n", config.mqtt_hourly_topic);
-          Serial.printf("MQTT Setup Topic date: %s\n", config.mqtt_date_topic);
-          Serial.printf("MQTT Setup Topic env: %s\n", config.mqtt_env_topic);
-          Serial.printf("MQTT Setup Topic shift: %s\n", config.mqtt_shift_topic);
-          Serial.printf("MQTT Setup Topic air_quality: %s\n", config.mqtt_air_quality_topic);
-          Serial.printf("MQTT Setup Topic unified: %s\n", config.mqtt_unified_topic);
-          Serial.printf("MQTT Setup Topic request: %s\n", config.mqtt_request_topic);
-          if (isHourlyForecastEnabled()) {
-              Serial.printf("Startup hourly forecast topic: %s\n",
-                            strlen(config.mqtt_hourly_topic) > 0 ? config.mqtt_hourly_topic : "(empty)");
-          } else {
-              Serial.println("Startup hourly forecast topic: disabled in Battery mode");
-          }
-          
-          // Disable AP ONLY if it was enabled (optional, but safe)
-          if (enableAP) {
-              WiFi.softAPdisconnect(true);
-              WiFi.mode(WIFI_STA);
-              Serial.println("MQTT Connected! AP Disabled.");
-          }
-          
-          // Setup NTP (Only after MQTT is connected)
-          const char* ntp1 = (strlen(config.ntp_server) > 0) ? config.ntp_server : "ntp.aliyun.com";
-          const char* ntp2 = (strlen(config.ntp_server_2) > 0) ? config.ntp_server_2 : "ntp.tencent.com";
-          
-          timeClient.setPoolServerName(ntp1);
-          timeClient.setTimeOffset(28800);
-          timeClient.begin(); // Start NTP
-          
-          Serial.printf("Waiting for NTP (%s)...", ntp1);
-          // Reduced retry count since we are already connected to internet
-          int retry = 0;
-          bool ntpSynced = false;
-          bool usingSecondary = false;
-          
-          while(retry < 10) { 
-              if (timeClient.forceUpdate()) {
-                  ntpSynced = true;
-                  break;
-              }
-              delay(500);
-              retry++;
-              
-              // Switch to secondary after 5 attempts
-              if (retry == 5 && !usingSecondary && strlen(ntp2) > 0) {
-                  Serial.printf("\nSwitching to Secondary NTP (%s)...", ntp2);
-                  timeClient.setPoolServerName(ntp2);
-                  usingSecondary = true;
-              }
-          }
-          if (ntpSynced) {
-              Serial.println(" Synced");
-              Serial.println(timeClient.getFormattedTime());
-          } else {
-              Serial.println(" Timeout (Will retry in background)");
-          }
-
-          subscribeTopicWithLog("Setup", "text", config.mqtt_topic);
-          subscribeTopicWithLog("Setup", "weather", config.mqtt_weather_topic);
-          if (isHourlyForecastEnabled() && strlen(config.mqtt_hourly_topic) > 0) {
-              subscribeTopicWithLog("Setup", "hourly", config.mqtt_hourly_topic);
-          } else if (!isHourlyForecastEnabled()) {
-              Serial.printf("Setup subscribe skipped: hourly disabled in %s mode\n",
-                            isBatteryModeActive ? "Battery" : "DC");
-          } else {
-              Serial.println("Setup subscribe skipped: hourly topic empty");
-          }
-          subscribeTopicWithLog("Setup", "date", config.mqtt_date_topic);
-          subscribeTopicWithLog("Setup", "env", config.mqtt_env_topic);
-          subscribeTopicWithLog("Setup", "shift", config.mqtt_shift_topic);
-          subscribeTopicWithLog("Setup", "air_quality", config.mqtt_air_quality_topic);
-          subscribeTopicWithLog("Setup", "unified", config.mqtt_unified_topic);
-          
-          client.loop(); // Process incoming messages (e.g. SUBACK)
-          delay(100);
-
-          Serial.println("Weather request on startup: disabled");
-
-          // Initial battery status publish (moved to after connect & sub)
-          publishBatteryVoltage();
-      } else {
-          Serial.print("MQTT Connect failed, rc=");
-          Serial.println(client.state());
-          displayMessage("MQTT Connect failed!\nCheck Broker Config.");
-      }
-  }
-
-
-
+  // Start local management UI before any MQTT attempt so broker issues never block config access.
   if (!isBatteryModeActive) {
       server.on("/", handleRoot);
       server.on("/files", handleFileManager);
@@ -2660,12 +2664,14 @@ void setup() {
       server.on("/update", HTTP_GET, handleUpdate);
       server.on("/update", HTTP_POST, []() {
           server.sendHeader("Connection", "close");
-          if (Update.hasError()) {
-              server.send(500, "text/plain", "Update Failed");
-          } else {
+          if (!webOtaUploadFinished) {
+              server.send(500, "text/plain", "Update Failed: upload did not finish");
+          } else if (webOtaUploadSucceeded && !webOtaHasError) {
               server.send(200, "text/html", "Update Success. Rebooting...");
               delay(1000);
               ESP.restart();
+          } else {
+              server.send(500, "text/plain", "Update Failed");
           }
       }, handleUpdateFirmware);
       server.on("/upload", HTTP_POST, [](){ server.send(200, "text/plain", ""); }, handleUpload);
@@ -2712,6 +2718,33 @@ void setup() {
       Serial.println("Battery mode: HTTP server, ArduinoOTA and mDNS disabled");
   }
 
+  // Setup MQTT
+  if (strlen(config.mqtt_server) > 0 && WiFi.status() == WL_CONNECTED) {
+      applyMqttTransportConfig();
+      Serial.printf("MQTT transport selected: %s\n", getMqttProtocolName(config.mqtt_protocol));
+      Serial.printf("MQTT Setup Config: protocol=%s server=%s port=%d\n",
+                    getMqttProtocolName(config.mqtt_protocol),
+                    config.mqtt_server,
+                    config.mqtt_port);
+      Serial.printf("MQTT Setup Topic text: %s\n", config.mqtt_topic);
+      Serial.printf("MQTT Setup Topic weather: %s\n", config.mqtt_weather_topic);
+      Serial.printf("MQTT Setup Topic hourly: %s\n", config.mqtt_hourly_topic);
+      Serial.printf("MQTT Setup Topic date: %s\n", config.mqtt_date_topic);
+      Serial.printf("MQTT Setup Topic env: %s\n", config.mqtt_env_topic);
+      Serial.printf("MQTT Setup Topic shift: %s\n", config.mqtt_shift_topic);
+      Serial.printf("MQTT Setup Topic air_quality: %s\n", config.mqtt_air_quality_topic);
+      Serial.printf("MQTT Setup Topic unified: %s\n", config.mqtt_unified_topic);
+      Serial.printf("MQTT Setup Topic request: %s\n", config.mqtt_request_topic);
+      if (isHourlyForecastEnabled()) {
+          Serial.printf("Startup hourly forecast topic: %s\n",
+                        strlen(config.mqtt_hourly_topic) > 0 ? config.mqtt_hourly_topic : "(empty)");
+      } else {
+          Serial.println("Startup hourly forecast topic: disabled in Battery mode");
+      }
+      Serial.println("MQTT initial connect deferred to background; HTTP UI remains available");
+      lastMqttRetry = millis() - 5000;
+  }
+
   // Setup Button
   button.attachClick(handleButtonClick);
   button.attachDoubleClick(handleButtonDoubleClick);
@@ -2730,6 +2763,10 @@ void loop() {
   button.tick();
   if (!isBatteryModeActive) {
       server.handleClient();
+  }
+
+  if (webOtaInProgress) {
+      return;
   }
 
   if (isHourlyForecastEnabled() &&
@@ -2756,10 +2793,19 @@ void loop() {
                    WiFi.softAP(ap_ssid.c_str());
               }
           }
+
+          unsigned long now = millis();
+          if (now - lastWiFiReconnectAttempt > 15000) {
+              lastWiFiReconnectAttempt = now;
+              Serial.println("WiFi reconnect attempt: scanning for strongest AP");
+              if (connectConfiguredWiFi(6000, true)) {
+                  logCurrentWiFiLink("WiFi Reconnected via strongest AP");
+              }
+          }
           // Do NOT return here, allow server.handleClient() to run in loop
       } else {
           if (wifiWarningShown) {
-              Serial.println("WiFi Restored");
+              logCurrentWiFiLink("WiFi Restored");
               wifiWarningShown = false;
           }
       }
