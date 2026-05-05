@@ -29,6 +29,8 @@ void handleRoot() {
   html.replace("%CSS%", COMMON_CSS);
   html.replace("%WIFI_SSID%", String(config.wifi_ssid));
   html.replace("%WIFI_PASS%", String(config.wifi_pass));
+  html.replace("%WIFI_LAST_CHANNEL%", config.wifi_last_channel > 0 ? String(config.wifi_last_channel) : String("(not learned)"));
+  html.replace("%WIFI_LAST_BSSID%", strlen(config.wifi_last_bssid) > 0 ? String(config.wifi_last_bssid) : String("(not learned)"));
   html.replace("%MQTT_SERVER%", String(config.mqtt_server));
   html.replace("%MQTT_PORT%", String(config.mqtt_port));
   html.replace("%MQTT_USER%", String(config.mqtt_user));

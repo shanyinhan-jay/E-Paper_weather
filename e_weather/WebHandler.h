@@ -101,6 +101,18 @@ const char COMMON_CSS[] PROGMEM = R"css(
   .grid-2-col input { margin: 0 !important; }
   .grid-3-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
   .grid-3-col input { margin: 0 !important; }
+  .readonly-status {
+    background: #f9fafb;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-top: 10px;
+    color: var(--text-light);
+    font-size: 14px;
+  }
+  .readonly-status strong {
+    color: var(--text);
+  }
   @media (max-width: 480px) { 
     .grid-2-col { grid-template-columns: 1fr; } 
     .grid-3-col { grid-template-columns: 1fr; }
@@ -215,6 +227,10 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
         <div class="grid-2-col">
             <input type='text' name='wifi_ssid' value='%WIFI_SSID%' placeholder="SSID">
             <input type='password' name='wifi_pass' value='%WIFI_PASS%' placeholder="Password">
+        </div>
+        <div class="readonly-status">
+            <div>Remembered Channel: <strong>%WIFI_LAST_CHANNEL%</strong></div>
+            <div>Remembered BSSID: <strong>%WIFI_LAST_BSSID%</strong></div>
         </div>
 
         <h3>NTP Servers</h3>

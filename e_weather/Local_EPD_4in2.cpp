@@ -13,6 +13,7 @@
 #include "Local_EPD_4in2.h"
 // #include "Debug.h"
 #define Debug(__info,...) Serial.printf(__info,##__VA_ARGS__)
+extern bool isBatteryModeActive;
 
 // Reduce Partial Buffer to Top Section (400x160)
 // 400 * 160 / 8 = 8000 bytes
@@ -190,7 +191,7 @@ parameter:
 ******************************************************************************/
 void Local_EPD_4IN2_ReadBusy(void)
 {
-    Debug("e-Paper busy\r\n");
+    if (!isBatteryModeActive) Debug("e-Paper busy\r\n");
 	EPD_4IN2_SendCommand(0x71);
     unsigned long start = millis();
     while(DEV_Digital_Read(EPD_BUSY_PIN) == 0) {      //LOW: idle, HIGH: busy
@@ -202,7 +203,7 @@ void Local_EPD_4IN2_ReadBusy(void)
 		EPD_4IN2_SendCommand(0x71);
         DEV_Delay_ms(100);
     }
-    Debug("e-Paper busy release\r\n");
+    if (!isBatteryModeActive) Debug("e-Paper busy release\r\n");
 }
 
 /******************************************************************************

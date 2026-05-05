@@ -8,11 +8,11 @@
 struct Config {
   char wifi_ssid[32] = "Linksys-2.4G-wifi5";
   char wifi_pass[32] = "19811201";
-  char mqtt_server[64] = "broker.emqx.io";
-  int  mqtt_port = 1883;
-  int  mqtt_protocol = 0; // 0 = MQTT, 1 = MQTT over TLS / MQTTS
-  char mqtt_user[32] = "";
-  char mqtt_pass[32] = "";
+  char mqtt_server[64] = "mqtt.shanyinhan.cn";
+  int  mqtt_port = 8883;
+  int  mqtt_protocol = 1; // 0 = MQTT, 1 = MQTT over TLS / MQTTS
+  char mqtt_user[32] = "jay";
+  char mqtt_pass[32] = "Robertacrawfor0501~";
   char mqtt_hourly_topic[64] = "shanyinhan/epd/hourly";
   char mqtt_battery_topic[64] = "shanyinhan/epd/battery";
   char mqtt_unified_topic[64] = "shanyinhan/epd/unified";
@@ -40,6 +40,8 @@ struct Config {
   char static_gw[16] = "";
   char static_mask[16] = "255.255.255.0";
   char static_dns[16] = "114.114.114.114";
+  int wifi_last_channel = 0;
+  char wifi_last_bssid[18] = "";
 };
 
 #endif
