@@ -161,6 +161,42 @@ bool isDetailedLoggingEnabled() {
     return !isBatteryModeActive;
 }
 
+static String buildMqttFailureGuidanceMessage() {
+    if (isBatteryModeActive) {
+        String msg = "Plug in power\n";
+        msg += "Switch to DC mode";
+        return msg;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        String msg = "MQTT Connect Failed\n";
+        msg += "Open browser:\n";
+        msg += "http://" + WiFi.localIP().toString();
+        return msg;
+    }
+
+    if (WiFi.getMode() & WIFI_AP) {
+        String msg = "WiFi fail\n";
+        msg += "Connect AP:\n";
+        msg += ap_ssid + "\n";
+        msg += "Open 192.168.4.1";
+        return msg;
+    }
+
+    String msg = "WiFi fail\n";
+    msg += "Connect AP:\n";
+    msg += ap_ssid + "\n";
+    msg += "Open 192.168.4.1";
+    return msg;
+}
+
+static String buildBatteryWiFiFailureMessage(const char* title) {
+    String msg = title;
+    msg += "\nPlug in power\n";
+    msg += "Switch to DC mode";
+    return msg;
+}
+
 static void setAdcMeasurementPower(bool enabled) {
     digitalWrite(ADC_SWITCH_EN_PIN, enabled ? HIGH : LOW);
 }
@@ -522,51 +558,72 @@ static bool scanBestWiFiCandidate(const char* targetSsid, int32_t& bestChannel, 
     return found;
 }
 
-static bool connectConfiguredWiFi(unsigned long timeoutMs, bool preferStrongestAp) {
+static bool connectRememberedWiFi(unsigned long timeoutMs) {
+    if (strlen(config.wifi_ssid) == 0) return false;
+    if (config.wifi_last_channel <= 0 || strlen(config.wifi_last_bssid) == 0) {
+        Serial.println("WiFi remembered AP unavailable: channel or BSSID not learned");
+        return false;
+    }
+
+    uint8_t rememberedBssid[6] = {0};
+    if (!parseBssidString(config.wifi_last_bssid, rememberedBssid)) {
+        Serial.printf("WiFi remembered AP ignored: invalid BSSID format: %s\n", config.wifi_last_bssid);
+        return false;
+    }
+
+    Serial.printf("WiFi begin using remembered AP: ssid=%s channel=%d bssid=%s timeout=%lu ms\n",
+                  config.wifi_ssid,
+                  config.wifi_last_channel,
+                  config.wifi_last_bssid,
+                  timeoutMs);
+    WiFi.begin(config.wifi_ssid, config.wifi_pass, config.wifi_last_channel, rememberedBssid, true);
+
+    unsigned long rememberedStart = millis();
+    while (WiFi.status() != WL_CONNECTED && (millis() - rememberedStart) < timeoutMs) {
+        delay(250);
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+        logCurrentWiFiLink("WiFi Connected via remembered AP!");
+        rememberCurrentWiFiAp();
+        return true;
+    }
+
+    Serial.printf("WiFi remembered AP connect timed out after %lu ms\n", timeoutMs);
+    return false;
+}
+
+static bool connectConfiguredWiFi(unsigned long timeoutMs, bool useRememberedApFirst, bool allowScanFallback) {
     if (strlen(config.wifi_ssid) == 0) return false;
 
     configureStationNetworkSettings();
     WiFi.disconnect(false, true);
     delay(100);
 
-    if (preferStrongestAp &&
-        config.wifi_last_channel > 0 &&
-        strlen(config.wifi_last_bssid) > 0) {
-        uint8_t rememberedBssid[6] = {0};
-        if (parseBssidString(config.wifi_last_bssid, rememberedBssid)) {
-            unsigned long rememberedTimeoutMs = (timeoutMs < 4000) ? timeoutMs : 4000;
-            Serial.printf("WiFi begin using remembered AP: ssid=%s channel=%d bssid=%s timeout=%lu ms\n",
-                          config.wifi_ssid,
-                          config.wifi_last_channel,
-                          config.wifi_last_bssid,
-                          rememberedTimeoutMs);
-            WiFi.begin(config.wifi_ssid, config.wifi_pass, config.wifi_last_channel, rememberedBssid, true);
-
-            unsigned long rememberedStart = millis();
-            while (WiFi.status() != WL_CONNECTED && (millis() - rememberedStart) < rememberedTimeoutMs) {
-                delay(250);
-            }
-
-            if (WiFi.status() == WL_CONNECTED) {
-                logCurrentWiFiLink("WiFi Connected via remembered AP!");
-                rememberCurrentWiFiAp();
-                return true;
-            }
-
-            Serial.printf("WiFi remembered AP connect timed out after %lu ms, falling back to scan\n",
-                          rememberedTimeoutMs);
-            WiFi.disconnect(false, true);
-            delay(100);
-        } else {
-            Serial.printf("WiFi remembered AP ignored: invalid BSSID format: %s\n", config.wifi_last_bssid);
+    if (useRememberedApFirst) {
+        unsigned long rememberedTimeoutMs = (timeoutMs < 4000) ? timeoutMs : 4000;
+        if (connectRememberedWiFi(rememberedTimeoutMs)) {
+            return true;
         }
+
+        if (!allowScanFallback) {
+            return false;
+        }
+
+        Serial.println("WiFi remembered AP failed, falling back to scan");
+        WiFi.disconnect(false, true);
+        delay(100);
+    }
+
+    if (!allowScanFallback) {
+        Serial.println("WiFi scan disabled for current mode");
+        return false;
     }
 
     int32_t bestChannel = 0;
     int32_t bestRssi = -127;
     uint8_t bestBssid[6] = {0};
-    bool hasBestCandidate = preferStrongestAp &&
-                            scanBestWiFiCandidate(config.wifi_ssid, bestChannel, bestBssid, bestRssi);
+    bool hasBestCandidate = scanBestWiFiCandidate(config.wifi_ssid, bestChannel, bestBssid, bestRssi);
 
     if (hasBestCandidate) {
         Serial.printf("WiFi begin using strongest AP: ssid=%s channel=%d rssi=%d bssid=%s\n",
@@ -932,6 +989,25 @@ static void ensureNtpClientStarted() {
     } else {
         Serial.println("NTP client started");
     }
+}
+
+static bool syncNtpForUpcomingDisplay(const char* reason) {
+    if (WiFi.status() != WL_CONNECTED) return false;
+
+    ensureNtpClientStarted();
+    if (timeClient.isTimeSet()) return true;
+
+    if (isDetailedLoggingEnabled()) {
+        Serial.printf("NTP immediate sync before display (%s)...\n", reason);
+    } else {
+        Serial.println("NTP immediate sync before display");
+    }
+
+    bool ok = timeClient.forceUpdate();
+    if (isDetailedLoggingEnabled()) {
+        Serial.printf("NTP immediate sync result: %s\n", ok ? "ok" : "failed");
+    }
+    return ok;
 }
 
 void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight) {
@@ -1913,10 +1989,14 @@ void displayWeatherDashboard(bool partial_update, bool sendSignal) {
             } else {
                 // DATE Mode: Show Update Timestamp instead of Indoor Temp/Humi
                 u8g2.setFont(u8g2_font_wqy12_t_gb2312);
-                time_t now = timeClient.getEpochTime();
-                struct tm *t_now = gmtime(&now);
                 char timeStr[25];
-                sprintf(timeStr, "update: %02d-%02d %02d:%02d", t_now->tm_mon + 1, t_now->tm_mday, t_now->tm_hour, t_now->tm_min);
+                if (timeClient.isTimeSet()) {
+                    time_t now = timeClient.getEpochTime();
+                    struct tm *t_now = gmtime(&now);
+                    sprintf(timeStr, "update: %02d-%02d %02d:%02d", t_now->tm_mon + 1, t_now->tm_mday, t_now->tm_hour, t_now->tm_min);
+                } else {
+                    sprintf(timeStr, "update: -- --:--");
+                }
                 int utW = u8g2.getUTF8Width(timeStr);
                 int inY = 135;
                 u8g2.drawUTF8(panelCenterX - (utW / 2), inY, timeStr);
@@ -2272,6 +2352,7 @@ void handleButtonLongPress() {
 }
 
 unsigned long lastMqttRetry = 0;
+constexpr int MQTT_MAX_RETRY_ATTEMPTS = 5;
 int mqttRetryCounter = 0; // New counter for MQTT retries
 bool wifiWarningShown = false;
 bool mqttWarningShown = false;
@@ -2343,7 +2424,15 @@ void setup() {
   bool enableAP = false;
   
   if (strlen(config.wifi_ssid) > 0) {
-      if (connectConfiguredWiFi(30000, true)) {
+      bool wifiConnected = false;
+      if (isBatteryModeActive) {
+          wifiConnected = connectConfiguredWiFi(5000, true, false);
+      } else {
+          wifiConnected = connectConfiguredWiFi(30000, false, true);
+      }
+
+      if (wifiConnected) {
+          ensureNtpClientStarted();
           
           // Display IP and Gateway info in DC mode at startup
           if (modeState == LOW) {
@@ -2355,13 +2444,23 @@ void setup() {
           }
           // AP remains disabled unless WiFi fails or is not configured
       } else {
-          Serial.println("WiFi Timeout. Enabling AP.");
+          if (isBatteryModeActive) {
+              Serial.println("Battery mode WiFi connect failed. Showing warning on display.");
+              displayMessage(buildBatteryWiFiFailureMessage("WiFi Connect Failed"));
+          } else {
+              Serial.println("WiFi Timeout. Enabling AP.");
+              enableAP = true;
+              WiFi.mode(WIFI_AP);
+          }
+      }
+  } else {
+      if (isBatteryModeActive) {
+          Serial.println("Battery mode WiFi not configured. Showing warning on display.");
+          displayMessage(buildBatteryWiFiFailureMessage("WiFi Not Configured"));
+      } else {
           enableAP = true;
           WiFi.mode(WIFI_AP);
       }
-  } else {
-      enableAP = true;
-      WiFi.mode(WIFI_AP);
   }
   
   if (enableAP) {
@@ -2519,22 +2618,33 @@ void loop() {
       if (WiFi.status() != WL_CONNECTED) {
           if (!wifiWarningShown) {
               Serial.println("WiFi Lost, showing warning");
-              displayMessage("WiFi Connection Lost\nAP Enabled: " + ap_ssid);
+              if (isBatteryModeActive) {
+                  displayMessage(buildBatteryWiFiFailureMessage("WiFi Connection Lost"));
+              } else {
+                  displayMessage("WiFi Connection Lost\nAP Enabled: " + ap_ssid);
+              }
               wifiWarningShown = true;
               
-              // Ensure AP is active
-              if ((WiFi.getMode() & WIFI_AP) == 0) {
-                   WiFi.mode(WIFI_AP_STA);
-                   WiFi.softAP(ap_ssid.c_str());
+              // Ensure AP is active in DC mode only
+              if (!isBatteryModeActive && (WiFi.getMode() & WIFI_AP) == 0) {
+                  WiFi.mode(WIFI_AP_STA);
+                  WiFi.softAP(ap_ssid.c_str());
               }
           }
 
           unsigned long now = millis();
           if (now - lastWiFiReconnectAttempt > 15000) {
               lastWiFiReconnectAttempt = now;
-              Serial.println("WiFi reconnect attempt: scanning for strongest AP");
-              if (connectConfiguredWiFi(6000, true)) {
-                  logCurrentWiFiLink("WiFi Reconnected via strongest AP");
+              if (isBatteryModeActive) {
+                  Serial.println("WiFi reconnect attempt: using remembered AP only");
+                  if (connectConfiguredWiFi(4000, true, false)) {
+                      logCurrentWiFiLink("WiFi Reconnected via remembered AP");
+                  }
+              } else {
+                  Serial.println("WiFi reconnect attempt: scanning for strongest AP");
+                  if (connectConfiguredWiFi(6000, false, true)) {
+                      logCurrentWiFiLink("WiFi Reconnected via strongest AP");
+                  }
               }
           }
           // Do NOT return here, allow server.handleClient() to run in loop
@@ -2549,13 +2659,9 @@ void loop() {
   // MQTT Blocking Check (If failed to connect, stop everything else)
   if (mqttGiveUp) {
       if (!mqttWarningShown) {
-           Serial.println("MQTT Failed (Persistent). AP Enabled.");
-           // Ensure AP is active for config
-           if ((WiFi.getMode() & WIFI_AP) == 0) {
-                WiFi.mode(WIFI_AP_STA);
-                WiFi.softAP(ap_ssid.c_str());
-           }
-           String msg = "MQTT Connect Failed\nConfig via AP: " + ap_ssid + "\nOr IP: " + WiFi.localIP().toString();
+           Serial.printf("MQTT retry stopped after %d failed attempts. HTTP service remains available.\n",
+                         MQTT_MAX_RETRY_ATTEMPTS);
+           String msg = buildMqttFailureGuidanceMessage();
            displayMessage(msg);
            mqttWarningShown = true;
       }
@@ -2575,19 +2681,20 @@ void loop() {
                   
                   if (reconnect()) {
                        mqttRetryCounter = 0;
+                       mqttGiveUp = false;
                        mqttWarningShown = false;
                        // Disable AP if reconnected
                        WiFi.softAPdisconnect(true);
                        WiFi.mode(WIFI_STA);
                   } else {
                        mqttRetryCounter++;
-                       Serial.printf("MQTT Reconnect failed (%d/3)\n", mqttRetryCounter);
+                       Serial.printf("MQTT reconnect failed (%d/%d)\n",
+                                     mqttRetryCounter,
+                                     MQTT_MAX_RETRY_ATTEMPTS);
                        
-                       if (mqttRetryCounter >= 3 && !mqttWarningShown) {
-                            displayMessage("MQTT Connection Failed\nBroker not reachable.");
-                            mqttWarningShown = true;
-                            // Optionally set mqttGiveUp = true if you want to stop retrying
-                            // mqttGiveUp = true; 
+                       if (mqttRetryCounter >= MQTT_MAX_RETRY_ATTEMPTS) {
+                            mqttGiveUp = true;
+                            mqttWarningShown = false;
                        }
                   }
               }
@@ -2600,28 +2707,13 @@ void loop() {
       }
   }
   
-  // Handle deferred updates
-  if (millis() - lastUpdateTrigger > UPDATE_DELAY_MS) {
-      if (updateWeatherPending || updateEnvPending || updateDatePending) {
-          if (isDetailedLoggingEnabled()) {
-              Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
-          } else {
-              Serial.println("Triggering deferred weather update");
-          }
-          displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
-          updateWeatherPending = false;
-          updateEnvPending = false;
-          updateDatePending = false;
-          fullRefreshPending = false; // Reset full refresh flag
-      }
-  }
-  
-  // Optimized NTP Sync Strategy (Only if MQTT is connected)
+  // Optimized NTP Sync Strategy (Run whenever WiFi is connected)
   static unsigned long lastNtpRetry = 0;
   static int ntpRetryCount = 0;
   static bool usingSecondaryNtp = false;
 
-  if (client.connected()) {
+  if (WiFi.status() == WL_CONNECTED) {
+      ensureNtpClientStarted();
       if (!timeClient.isTimeSet()) {
           if (millis() - lastNtpRetry > 5000) { // Retry every 5 seconds
               lastNtpRetry = millis();
@@ -2649,6 +2741,27 @@ void loop() {
           if (config.ui_mode == 0) {
               timeClient.update();
           }
+      }
+  }
+
+  // Handle deferred updates
+  if (millis() - lastUpdateTrigger > UPDATE_DELAY_MS) {
+      if (updateWeatherPending || updateEnvPending || updateDatePending) {
+          if (!timeClient.isTimeSet() &&
+              WiFi.status() == WL_CONNECTED &&
+              (updateWeatherPending || updateDatePending)) {
+              syncNtpForUpcomingDisplay("deferred update");
+          }
+          if (isDetailedLoggingEnabled()) {
+              Serial.printf("Triggering Deferred Weather Update (Full: %s)\n", fullRefreshPending ? "Yes" : "No");
+          } else {
+              Serial.println("Triggering deferred weather update");
+          }
+          displayWeatherDashboard(!fullRefreshPending, updateWeatherPending); // Send signal ONLY if weather MQTT triggered this
+          updateWeatherPending = false;
+          updateEnvPending = false;
+          updateDatePending = false;
+          fullRefreshPending = false; // Reset full refresh flag
       }
   }
   

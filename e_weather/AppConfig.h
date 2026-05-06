@@ -9,7 +9,7 @@ struct Config {
   char wifi_ssid[32] = "Linksys-2.4G-wifi5";
   char wifi_pass[32] = "19811201";
   char mqtt_server[64] = "mqtt.shanyinhan.cn";
-  int  mqtt_port = 8883;
+  int  mqtt_port = 1023;
   int  mqtt_protocol = 1; // 0 = MQTT, 1 = MQTT over TLS / MQTTS
   char mqtt_user[32] = "jay";
   char mqtt_pass[32] = "Robertacrawfor0501~";
