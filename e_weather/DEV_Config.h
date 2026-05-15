@@ -53,6 +53,7 @@
     #define EPD_DC_PIN   27
     #define EPD_BUSY_PIN 25
     #define BUTTON_PIN   4
+    #define TOUCH_TOGGLE_PIN 33 // ESP32 touch pad, used to toggle bottom forecast view in DC mode only
     #define LED_PIN      2
     #define UNUSED_PIN   0
     #define ADC_SWITCH_EN_PIN 5 // High = enable ADC divider power via TPS22860

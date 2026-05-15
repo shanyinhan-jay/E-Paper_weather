@@ -11,6 +11,7 @@
 - ADC_SWITCH_EN_PIN : 5 // HIGH = enable TPS22860 for battery sensing
 - MODE_PIN : 19 // HIGH = Battery, LOW = DC
 - BUTTON_PIN : 4 // Active LOW button input
+- TOUCH_TOGGLE_PIN : 33 // Capacitive touch toggle, DC mode only
 - LED_PIN : 2
 - BYE_SIGNAL_PIN : 18 // Low when task finished (Battery Mode only)
 - UNUSED : 0
@@ -82,7 +83,7 @@ PubSubClient client;
 WiFiUDP ntpUDP;
 NTPClient timeClient(ntpUDP); 
 UBYTE *BlackImage = NULL;
-OneButton button(BUTTON_PIN, true); // GPIO defined in DEV_Config.h, Active Low
+OneButton* button = nullptr;
 
 const char* DEFAULT_AP_SSID_BASE = "EPD-Display";
 String ap_ssid = DEFAULT_AP_SSID_BASE;
@@ -137,7 +138,15 @@ int currentHourlyForecastCount = 0;
 BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
 unsigned long hourlyViewActivatedAt = 0;
 const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
+const unsigned long TOUCH_TOGGLE_DEBOUNCE_MS = 800;
+const uint8_t TOUCH_CALIBRATION_SAMPLES = 8;
+const uint16_t TOUCH_MIN_ACTIVE_DELTA = 8;
 bool isBatteryModeActive = false;
+bool touchToggleEnabled = false;
+bool touchTogglePressed = false;
+uint16_t touchToggleBaseline = 0;
+uint16_t touchToggleThreshold = 0;
+unsigned long lastTouchToggleAt = 0;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -1457,6 +1466,68 @@ static const char* getBottomForecastViewName(BottomForecastViewMode view) {
     return (view == BOTTOM_VIEW_HOURLY) ? "12-hour" : "daily";
 }
 
+static void toggleBottomForecastView(const char* source) {
+    if (!isHourlyForecastEnabled()) {
+        bottomForecastView = BOTTOM_VIEW_DAILY;
+        hourlyViewActivatedAt = 0;
+        Serial.printf("%s: Hourly forecast disabled in Battery mode, keeping daily view\n", source);
+        displayWeatherDashboard(false);
+        return;
+    }
+
+    if (currentHourlyForecastCount <= 0) {
+        Serial.printf("%s: Hourly forecast unavailable, keeping daily view\n", source);
+        displayWeatherDashboard(false);
+        return;
+    }
+
+    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
+    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
+    Serial.printf("%s: switched bottom forecast to %s view\n", source, getBottomForecastViewName(bottomForecastView));
+    displayWeatherDashboard(false);
+}
+
+static void initializeTouchToggleInput() {
+    uint32_t total = 0;
+    for (uint8_t i = 0; i < TOUCH_CALIBRATION_SAMPLES; ++i) {
+        total += touchRead(TOUCH_TOGGLE_PIN);
+        delay(10);
+    }
+
+    touchToggleBaseline = total / TOUCH_CALIBRATION_SAMPLES;
+    uint16_t activeDelta = touchToggleBaseline / 4;
+    if (activeDelta < TOUCH_MIN_ACTIVE_DELTA) {
+        activeDelta = TOUCH_MIN_ACTIVE_DELTA;
+    }
+    touchToggleThreshold = (touchToggleBaseline > activeDelta) ? (touchToggleBaseline - activeDelta) : 0;
+    touchTogglePressed = false;
+    lastTouchToggleAt = 0;
+    touchToggleEnabled = true;
+
+    Serial.printf("Touch toggle initialized on GPIO %d (baseline=%u, threshold=%u)\n",
+                  TOUCH_TOGGLE_PIN,
+                  touchToggleBaseline,
+                  touchToggleThreshold);
+}
+
+static void handleTouchToggleInput() {
+    if (!touchToggleEnabled || isBatteryModeActive) {
+        return;
+    }
+
+    uint16_t touchValue = touchRead(TOUCH_TOGGLE_PIN);
+    bool isTouched = (touchValue > 0 && touchValue <= touchToggleThreshold);
+    unsigned long now = millis();
+
+    if (isTouched && !touchTogglePressed && (now - lastTouchToggleAt >= TOUCH_TOGGLE_DEBOUNCE_MS)) {
+        lastTouchToggleAt = now;
+        Serial.printf("Touch toggle triggered on GPIO %d (value=%u)\n", TOUCH_TOGGLE_PIN, touchValue);
+        toggleBottomForecastView("Touch");
+    }
+
+    touchTogglePressed = isTouched;
+}
+
 static void clearHourlyForecastData() {
     for (int i = 0; i < 12; ++i) {
         currentHourlyForecast[i].fx_time = "";
@@ -2322,24 +2393,7 @@ bool reconnect() {
 
 // Button Handlers
 void handleButtonClick() {
-    if (!isHourlyForecastEnabled()) {
-        bottomForecastView = BOTTOM_VIEW_DAILY;
-        hourlyViewActivatedAt = 0;
-        Serial.println("Click: Hourly forecast disabled in Battery mode, keeping daily view");
-        displayWeatherDashboard(false);
-        return;
-    }
-
-    if (currentHourlyForecastCount <= 0) {
-        Serial.println("Click: Hourly forecast unavailable, keeping daily view");
-        displayWeatherDashboard(false);
-        return;
-    }
-
-    bottomForecastView = (bottomForecastView == BOTTOM_VIEW_DAILY) ? BOTTOM_VIEW_HOURLY : BOTTOM_VIEW_DAILY;
-    hourlyViewActivatedAt = (bottomForecastView == BOTTOM_VIEW_HOURLY) ? millis() : 0;
-    Serial.printf("Click: switched bottom forecast to %s view\n", getBottomForecastViewName(bottomForecastView));
-    displayWeatherDashboard(false); // Full refresh
+    toggleBottomForecastView("Button");
 }
 
 void handleButtonDoubleClick() {
@@ -2579,10 +2633,17 @@ void setup() {
       lastMqttRetry = millis() - 5000;
   }
 
-  // Setup Button
-  button.attachClick(handleButtonClick);
-  button.attachDoubleClick(handleButtonDoubleClick);
-  button.attachLongPressStart(handleButtonLongPress);
+  // Setup local input controls only in DC mode.
+  if (!isBatteryModeActive) {
+      button = new OneButton(BUTTON_PIN, true);
+      button->attachClick(handleButtonClick);
+      button->attachDoubleClick(handleButtonDoubleClick);
+      button->attachLongPressStart(handleButtonLongPress);
+      initializeTouchToggleInput();
+  } else {
+      touchToggleEnabled = false;
+      Serial.println("Battery mode: local button and touch toggle disabled");
+  }
 
   // Initial Display
 // Initial Display - screen message suppressed
@@ -2594,8 +2655,11 @@ void setup() {
 }
 
 void loop() {
-  button.tick();
   if (!isBatteryModeActive) {
+      if (button != nullptr) {
+          button->tick();
+      }
+      handleTouchToggleInput();
       server.handleClient();
   }
 
