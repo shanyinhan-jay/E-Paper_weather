@@ -11,7 +11,7 @@
 - ADC_SWITCH_EN_PIN : 5 // HIGH = enable TPS22860 for battery sensing
 - MODE_PIN : 19 // HIGH = Battery, LOW = DC
 - BUTTON_PIN : 4 // Active LOW button input
-- TOUCH_TOGGLE_PIN : 33 // Capacitive touch toggle, DC mode only
+- TOUCH_TOGGLE_PIN : 12 // Capacitive touch toggle, DC mode only
 - LED_PIN : 2
 - BYE_SIGNAL_PIN : 18 // Low when task finished (Battery Mode only)
 - UNUSED : 0
@@ -139,14 +139,14 @@ BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
 unsigned long hourlyViewActivatedAt = 0;
 const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
 const unsigned long TOUCH_TOGGLE_DEBOUNCE_MS = 800;
-const uint8_t TOUCH_CALIBRATION_SAMPLES = 8;
-const uint16_t TOUCH_MIN_ACTIVE_DELTA = 8;
+const unsigned long TOUCH_TOGGLE_LOG_INTERVAL_MS = 500;
+const uint16_t TOUCH_TOGGLE_RAW_THRESHOLD = 1250;
 bool isBatteryModeActive = false;
 bool touchToggleEnabled = false;
 bool touchTogglePressed = false;
-uint16_t touchToggleBaseline = 0;
-uint16_t touchToggleThreshold = 0;
+uint16_t lastTouchToggleValue = 0;
 unsigned long lastTouchToggleAt = 0;
+unsigned long lastTouchToggleLogAt = 0;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -1488,26 +1488,15 @@ static void toggleBottomForecastView(const char* source) {
 }
 
 static void initializeTouchToggleInput() {
-    uint32_t total = 0;
-    for (uint8_t i = 0; i < TOUCH_CALIBRATION_SAMPLES; ++i) {
-        total += touchRead(TOUCH_TOGGLE_PIN);
-        delay(10);
-    }
-
-    touchToggleBaseline = total / TOUCH_CALIBRATION_SAMPLES;
-    uint16_t activeDelta = touchToggleBaseline / 4;
-    if (activeDelta < TOUCH_MIN_ACTIVE_DELTA) {
-        activeDelta = TOUCH_MIN_ACTIVE_DELTA;
-    }
-    touchToggleThreshold = (touchToggleBaseline > activeDelta) ? (touchToggleBaseline - activeDelta) : 0;
     touchTogglePressed = false;
     lastTouchToggleAt = 0;
+    lastTouchToggleLogAt = 0;
+    lastTouchToggleValue = touchRead(TOUCH_TOGGLE_PIN);
     touchToggleEnabled = true;
 
-    Serial.printf("Touch toggle initialized on GPIO %d (baseline=%u, threshold=%u)\n",
+    Serial.printf("Touch toggle initialized on GPIO %d (raw threshold=%u)\n",
                   TOUCH_TOGGLE_PIN,
-                  touchToggleBaseline,
-                  touchToggleThreshold);
+                  TOUCH_TOGGLE_RAW_THRESHOLD);
 }
 
 static void handleTouchToggleInput() {
@@ -1516,8 +1505,14 @@ static void handleTouchToggleInput() {
     }
 
     uint16_t touchValue = touchRead(TOUCH_TOGGLE_PIN);
-    bool isTouched = (touchValue > 0 && touchValue <= touchToggleThreshold);
     unsigned long now = millis();
+    bool isTouched = (touchValue > 0 && touchValue < TOUCH_TOGGLE_RAW_THRESHOLD);
+
+    lastTouchToggleValue = touchValue;
+    if (now - lastTouchToggleLogAt >= TOUCH_TOGGLE_LOG_INTERVAL_MS) {
+        lastTouchToggleLogAt = now;
+        Serial.printf("Touch raw value on GPIO %d: %u\n", TOUCH_TOGGLE_PIN, touchValue);
+    }
 
     if (isTouched && !touchTogglePressed && (now - lastTouchToggleAt >= TOUCH_TOGGLE_DEBOUNCE_MS)) {
         lastTouchToggleAt = now;
@@ -2430,8 +2425,8 @@ void setup() {
   pinMode(ADC_SWITCH_EN_PIN, OUTPUT);
   setAdcMeasurementPower(false);
 
-  // Mode Pin Indicator (Input-only on GPIO 35)
-  pinMode(MODE_PIN, INPUT);
+  // Mode Pin indicator on GPIO19, using the ESP32 internal pull-up.
+  pinMode(MODE_PIN, INPUT_PULLUP);
   delay(100); // Wait for pin voltage to stabilize
   
   int modeState = digitalRead(MODE_PIN);
