@@ -45,6 +45,8 @@ void handleRoot() {
   html.replace("%REQUEST_INTERVAL%", String(config.request_interval));
   html.replace("%DAY_START%", String(config.day_start_hour));
   html.replace("%DAY_END%", String(config.day_end_hour));
+  html.replace("%TOUCH_TRIGGER_DELTA%", String(config.touch_trigger_delta));
+  html.replace("%TOUCH_BASELINE%", touchToggleBaseline > 0 ? String(touchToggleBaseline) : String("--"));
   
   // Static IP
   html.replace("%USE_STATIC_IP%", config.use_static_ip ? "checked" : "");
@@ -247,6 +249,7 @@ void handleSaveConfig() {
   if (server.hasArg("request_interval")) config.request_interval = server.arg("request_interval").toInt();
   if (server.hasArg("day_start_hour")) config.day_start_hour = server.arg("day_start_hour").toInt();
   if (server.hasArg("day_end_hour")) config.day_end_hour = server.arg("day_end_hour").toInt();
+  if (server.hasArg("touch_trigger_delta")) config.touch_trigger_delta = server.arg("touch_trigger_delta").toInt();
   
   if (server.hasArg("invert_display")) config.invert_display = (server.arg("invert_display") == "1");
   if (server.hasArg("ui_mode")) config.ui_mode = server.arg("ui_mode").toInt();

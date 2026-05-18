@@ -138,15 +138,25 @@ int currentHourlyForecastCount = 0;
 BottomForecastViewMode bottomForecastView = BOTTOM_VIEW_DAILY;
 unsigned long hourlyViewActivatedAt = 0;
 const unsigned long HOURLY_VIEW_AUTO_RETURN_MS = 20000;
-const unsigned long TOUCH_TOGGLE_DEBOUNCE_MS = 800;
+const unsigned long TOUCH_TOGGLE_DEBOUNCE_MS = 80;
 const unsigned long TOUCH_TOGGLE_LOG_INTERVAL_MS = 500;
-const uint16_t TOUCH_TOGGLE_RAW_THRESHOLD = 1250;
+const bool TOUCH_TOGGLE_LOG_VALUES = false;
+const unsigned long TOUCH_TOGGLE_BASELINE_SETTLE_MS = 2000;
+const uint8_t TOUCH_TOGGLE_BASELINE_SAMPLE_COUNT = 12;
+const uint8_t TOUCH_TOGGLE_SAMPLE_COUNT = 7;
+const uint16_t TOUCH_TOGGLE_RELEASE_MARGIN = 60;
 bool isBatteryModeActive = false;
 bool touchToggleEnabled = false;
 bool touchTogglePressed = false;
+bool touchToggleDebouncing = false;
+uint16_t touchToggleBaseline = 0;
+uint16_t touchToggleTriggerThreshold = 0;
+uint16_t touchToggleReleaseThreshold = 0;
+uint16_t lastTouchToggleRawValue = 0;
 uint16_t lastTouchToggleValue = 0;
 unsigned long lastTouchToggleAt = 0;
 unsigned long lastTouchToggleLogAt = 0;
+unsigned long touchToggleDebounceStartedAt = 0;
 String currentCity = "绍兴";
 String solarDate = "";
 String weekDay = "";
@@ -847,6 +857,7 @@ void loadConfig() {
           config.adc_pin = doc["adc_pin"] | 34;
           config.adc_ratio = doc["adc_ratio"] | 2.0;
           config.low_battery_threshold = doc["low_battery_threshold"] | 3.3;
+          config.touch_trigger_delta = doc["touch_trigger_delta"] | 200;
           config.sleep_delay = doc["sleep_delay"] | 10;
           config.config_timeout = doc["config_timeout"] | 5;
           
@@ -917,6 +928,7 @@ void saveConfig() {
   doc["adc_pin"] = config.adc_pin;
   doc["adc_ratio"] = config.adc_ratio;
   doc["low_battery_threshold"] = config.low_battery_threshold;
+  doc["touch_trigger_delta"] = config.touch_trigger_delta;
   doc["sleep_delay"] = config.sleep_delay;
   doc["config_timeout"] = config.config_timeout;
   
@@ -1489,14 +1501,75 @@ static void toggleBottomForecastView(const char* source) {
 
 static void initializeTouchToggleInput() {
     touchTogglePressed = false;
+    touchToggleDebouncing = false;
     lastTouchToggleAt = 0;
     lastTouchToggleLogAt = 0;
-    lastTouchToggleValue = touchRead(TOUCH_TOGGLE_PIN);
+    touchToggleDebounceStartedAt = 0;
+
+    Serial.printf("Touch baseline sampling will start after %lu ms settle time on GPIO %d\n",
+                  TOUCH_TOGGLE_BASELINE_SETTLE_MS,
+                  TOUCH_TOGGLE_PIN);
+    delay(TOUCH_TOGGLE_BASELINE_SETTLE_MS);
+
+    uint32_t total = 0;
+    for (uint8_t i = 0; i < TOUCH_TOGGLE_BASELINE_SAMPLE_COUNT; ++i) {
+        uint16_t sample = touchRead(TOUCH_TOGGLE_PIN);
+        total += sample;
+        delay(15);
+    }
+
+    touchToggleBaseline = total / TOUCH_TOGGLE_BASELINE_SAMPLE_COUNT;
+    uint16_t triggerDelta = config.touch_trigger_delta > 0 ? (uint16_t)config.touch_trigger_delta : 1;
+    touchToggleTriggerThreshold = (touchToggleBaseline > triggerDelta)
+        ? (touchToggleBaseline - triggerDelta)
+        : 1;
+    uint16_t releaseMargin = triggerDelta / 2;
+    if (releaseMargin < 10) {
+        releaseMargin = 10;
+    }
+    if (releaseMargin > TOUCH_TOGGLE_RELEASE_MARGIN) {
+        releaseMargin = TOUCH_TOGGLE_RELEASE_MARGIN;
+    }
+    uint16_t releaseThreshold = touchToggleTriggerThreshold + releaseMargin;
+    if (touchToggleBaseline > 1 && releaseThreshold >= touchToggleBaseline) {
+        releaseThreshold = touchToggleBaseline - 1;
+    }
+    touchToggleReleaseThreshold = releaseThreshold;
+
+    lastTouchToggleRawValue = touchToggleBaseline;
+    lastTouchToggleValue = touchToggleBaseline;
     touchToggleEnabled = true;
 
-    Serial.printf("Touch toggle initialized on GPIO %d (raw threshold=%u)\n",
+    Serial.printf("Touch toggle initialized on GPIO %d (baseline=%u, delta=%u, trigger<%u, release>%u, debounce=%lums)\n",
                   TOUCH_TOGGLE_PIN,
-                  TOUCH_TOGGLE_RAW_THRESHOLD);
+                  touchToggleBaseline,
+                  triggerDelta,
+                  touchToggleTriggerThreshold,
+                  touchToggleReleaseThreshold,
+                  TOUCH_TOGGLE_DEBOUNCE_MS);
+}
+
+static uint16_t readTouchToggleMedian(uint16_t* rawSample) {
+    uint16_t samples[TOUCH_TOGGLE_SAMPLE_COUNT];
+    for (uint8_t i = 0; i < TOUCH_TOGGLE_SAMPLE_COUNT; ++i) {
+        samples[i] = touchRead(TOUCH_TOGGLE_PIN);
+    }
+
+    if (rawSample != nullptr) {
+        *rawSample = samples[0];
+    }
+
+    for (uint8_t i = 1; i < TOUCH_TOGGLE_SAMPLE_COUNT; ++i) {
+        uint16_t key = samples[i];
+        int8_t j = i - 1;
+        while (j >= 0 && samples[j] > key) {
+            samples[j + 1] = samples[j];
+            --j;
+        }
+        samples[j + 1] = key;
+    }
+
+    return samples[TOUCH_TOGGLE_SAMPLE_COUNT / 2];
 }
 
 static void handleTouchToggleInput() {
@@ -1504,23 +1577,56 @@ static void handleTouchToggleInput() {
         return;
     }
 
-    uint16_t touchValue = touchRead(TOUCH_TOGGLE_PIN);
+    uint16_t rawTouchValue = 0;
+    uint16_t touchValue = readTouchToggleMedian(&rawTouchValue);
     unsigned long now = millis();
-    bool isTouched = (touchValue > 0 && touchValue < TOUCH_TOGGLE_RAW_THRESHOLD);
 
+    lastTouchToggleRawValue = rawTouchValue;
     lastTouchToggleValue = touchValue;
-    if (now - lastTouchToggleLogAt >= TOUCH_TOGGLE_LOG_INTERVAL_MS) {
+    if (TOUCH_TOGGLE_LOG_VALUES && now - lastTouchToggleLogAt >= TOUCH_TOGGLE_LOG_INTERVAL_MS) {
         lastTouchToggleLogAt = now;
-        Serial.printf("Touch raw value on GPIO %d: %u\n", TOUCH_TOGGLE_PIN, touchValue);
+        Serial.printf("Touch raw/median on GPIO %d: %u / %u (baseline=%u, trigger<%u)\n",
+                      TOUCH_TOGGLE_PIN,
+                      rawTouchValue,
+                      touchValue,
+                      touchToggleBaseline,
+                      touchToggleTriggerThreshold);
     }
 
-    if (isTouched && !touchTogglePressed && (now - lastTouchToggleAt >= TOUCH_TOGGLE_DEBOUNCE_MS)) {
+    if (!touchTogglePressed) {
+        if (touchValue > 0 && touchValue < touchToggleTriggerThreshold) {
+            if (!touchToggleDebouncing) {
+                touchToggleDebouncing = true;
+                touchToggleDebounceStartedAt = now;
+            }
+        } else {
+            touchToggleDebouncing = false;
+            touchToggleDebounceStartedAt = 0;
+        }
+    } else if (touchValue >= touchToggleReleaseThreshold) {
+        touchTogglePressed = false;
+        touchToggleDebouncing = false;
+        touchToggleDebounceStartedAt = 0;
+        Serial.printf("Touch released on GPIO %d (median=%u, release>=%u)\n",
+                      TOUCH_TOGGLE_PIN,
+                      touchValue,
+                      touchToggleReleaseThreshold);
+    }
+
+    if (!touchTogglePressed &&
+        touchToggleDebouncing &&
+        (now - touchToggleDebounceStartedAt >= TOUCH_TOGGLE_DEBOUNCE_MS)) {
         lastTouchToggleAt = now;
-        Serial.printf("Touch toggle triggered on GPIO %d (value=%u)\n", TOUCH_TOGGLE_PIN, touchValue);
+        touchTogglePressed = true;
+        touchToggleDebouncing = false;
+        touchToggleDebounceStartedAt = 0;
+        Serial.printf("Touch toggle triggered on GPIO %d (raw=%u, median=%u, baseline=%u)\n",
+                      TOUCH_TOGGLE_PIN,
+                      rawTouchValue,
+                      touchValue,
+                      touchToggleBaseline);
         toggleBottomForecastView("Touch");
     }
-
-    touchTogglePressed = isTouched;
 }
 
 static void clearHourlyForecastData() {
@@ -2391,15 +2497,6 @@ void handleButtonClick() {
     toggleBottomForecastView("Button");
 }
 
-void handleButtonDoubleClick() {
-    Serial.println("Double Click: Sleep disabled");
-}
-
-void handleButtonLongPress() {
-    Serial.println("Long Press: Refreshing Weather Page...");
-    displayWeatherDashboard(false); // Full refresh
-}
-
 unsigned long lastMqttRetry = 0;
 constexpr int MQTT_MAX_RETRY_ATTEMPTS = 5;
 int mqttRetryCounter = 0; // New counter for MQTT retries
@@ -2632,8 +2729,6 @@ void setup() {
   if (!isBatteryModeActive) {
       button = new OneButton(BUTTON_PIN, true);
       button->attachClick(handleButtonClick);
-      button->attachDoubleClick(handleButtonDoubleClick);
-      button->attachLongPressStart(handleButtonLongPress);
       initializeTouchToggleInput();
   } else {
       touchToggleEnabled = false;

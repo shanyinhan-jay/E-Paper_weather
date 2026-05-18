@@ -14,6 +14,7 @@ extern const char* build_time;
 extern void saveConfig();
 extern void handleMqttConfig();
 extern float getBatteryVoltage();
+extern uint16_t touchToggleBaseline;
 extern void displayMessageWithBitmap(String text, const unsigned char* bitmap, int bitmapWidth, int bitmapHeight);
 extern void displayWeatherDashboard(bool partial_update, bool sendSignal = false);
 extern bool webOtaInProgress;
@@ -276,10 +277,26 @@ const char INDEX_HTML_TEMPLATE[] PROGMEM = R"rawliteral(
 
         <a href="/mqtt_config" class="btn-group" style="display:block; text-align:center; background:#2563eb; color:white; padding:10px; border-radius:6px; margin:15px 0;">Configure MQTT Topics</a>
 
-        <h3>Day/Night Switch Time (Hour 0-23)</h3>
         <div class="grid-2-col">
-            <input type='number' name='day_start_hour' value='%DAY_START%' min="0" max="23" placeholder="Day Start (Default 6)">
-            <input type='number' name='day_end_hour' value='%DAY_END%' min="0" max="23" placeholder="Night Start (Default 18)">
+            <div>
+                <h3>Day/Night Switch Time</h3>
+                <div class="grid-2-col">
+                    <input type='number' name='day_start_hour' value='%DAY_START%' min="0" max="23" placeholder="Day Start (Default 6)">
+                    <input type='number' name='day_end_hour' value='%DAY_END%' min="0" max="23" placeholder="Night Start (Default 18)">
+                </div>
+            </div>
+            <div>
+                <div class="grid-2-col">
+                    <div>
+                        <h3>Delta</h3>
+                        <input type='number' name='touch_trigger_delta' value='%TOUCH_TRIGGER_DELTA%' min="1" placeholder="Baseline drop (Default 200)">
+                    </div>
+                    <div>
+                        <h3>Baseline</h3>
+                        <input type='text' value='%TOUCH_BASELINE%' readonly>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <input type='submit' value='Save Configuration' style="margin-top: 20px;">
